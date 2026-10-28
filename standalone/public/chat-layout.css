@@ -55,6 +55,8 @@
 .agent-workspace-heading { padding: 3px 9px 3px 4px; gap: 0; border-radius: 0; min-height: 74px; }
 .agent-workspace-heading:hover { background: var(--chat-hover); border-radius: 0; }
 .selected-workspace .agent-workspace-heading:hover { background: var(--chat-selected); }
+.agent-workspace-heading .agent-entry.conversation:hover,
+.agent-workspace-heading .agent-entry.conversation:focus-visible { background: transparent; }
 .agent-entry.conversation { min-height: 0; padding: 8px 4px; gap: 10px; border-radius: 0; }
 .agent-entry .conversation-top strong { font-size: 14px; font-weight: 500; }
 .agent-entry .conversation-preview { font-size: 11px; margin-top: 6px; }
@@ -106,14 +108,14 @@
 .harness-welcome p { font-size: 12px; }
 
 /* A flush composer preserves each harness's field arrangement. */
-.composer, .composer[data-harness="codex"], .composer[data-harness="dsh"] {
+.composer, .composer[data-harness="codex"], .composer:is([data-harness="dsh"], [data-harness="qoder"], [data-harness="zcode"]) {
   width: 100%; max-width: none; margin: 0; padding: 12px 24px 14px; border: 0; border-top: 1px solid var(--ar-line);
   border-radius: 0; background: var(--ar-panel); box-shadow: none; min-height: 190px; max-height: 55dvh;
 }
-.composer:hover, .composer:focus-within, .composer[data-harness="dsh"]:focus-within { box-shadow: none; border-color: var(--ar-line); }
+.composer:hover, .composer:focus-within, .composer:is([data-harness="dsh"], [data-harness="qoder"], [data-harness="zcode"]):focus-within { box-shadow: none; border-color: var(--ar-line); }
 .composer { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "draft draft" "attachments attachments" "tools send"; gap: 4px 8px; }
 .composer[data-harness="codex"] { grid-template-columns: minmax(0, 1fr) minmax(0, auto) auto; grid-template-areas: "draft draft draft" "attachments attachments attachments" "tools options send" "context context context"; }
-.composer[data-harness="dsh"] { grid-template-columns: minmax(0, 1fr) minmax(0, auto) auto; grid-template-areas: "context context context" "draft draft draft" "attachments attachments attachments" "tools options send"; }
+.composer:is([data-harness="dsh"], [data-harness="qoder"], [data-harness="zcode"]) { grid-template-columns: minmax(0, 1fr) minmax(0, auto) auto; grid-template-areas: "context context context" "draft draft draft" "attachments attachments attachments" "tools options send"; }
 .composer .composer-tools, .composer:not([data-harness="generic"]) .composer-tools { grid-area: tools; border: 0; padding: 0; align-self: center; gap: 6px; min-width: 0; }
 .composer .attachments { grid-area: attachments; }
 .composer .composer-tools .tool-button { padding: 7px; height: 36px; border-radius: 4px; }
@@ -122,13 +124,44 @@
 .composer #draft, .composer:not([data-harness="generic"]) #draft { grid-area: draft; padding: 7px 0; margin: 0; min-height: 95px; height: 95px; max-height: 23dvh; font-size: 14px; line-height: 1.7; resize: vertical; outline: 0; }
 .composer footer, .composer:not([data-harness="generic"]) footer { grid-area: send; padding: 0; align-self: center; margin: 0; }
 .composer footer > span, .composer #send span { display: none; }
-.composer #send, .composer:not([data-harness="generic"]) #send, .composer[data-harness="dsh"] #send { min-width: 64px; min-height: 30px; padding: 6px 17px; border: 0; border-radius: 4px; background: var(--room-soft); color: var(--green); font-size: 13px; font-weight: 500; }
+.composer #send, .composer:not([data-harness="generic"]) #send, .composer:is([data-harness="dsh"], [data-harness="qoder"], [data-harness="zcode"]) #send { min-width: 64px; min-height: 30px; padding: 6px 17px; border: 0; border-radius: 4px; background: var(--room-soft); color: var(--green); font-size: 13px; font-weight: 500; }
 .composer #send:hover:not(:disabled) { color: var(--chat-selected-text); background: var(--chat-selected); }
 .composer #send:disabled { color: var(--ar-dim); opacity: .5; }
-#harness-context, .composer[data-harness="codex"] #harness-context, .composer[data-harness="dsh"] #harness-context { margin: 0; padding: 2px 0; border: 0; border-radius: 0; background: transparent; gap: 12px; }
+#harness-context, .composer[data-harness="codex"] #harness-context, .composer:is([data-harness="dsh"], [data-harness="qoder"], [data-harness="zcode"]) #harness-context { margin: 0; padding: 2px 0; border: 0; border-radius: 0; background: transparent; gap: 12px; }
 .composer[data-harness="codex"] #harness-context { padding-top: 4px; }
 .composer-chip { font-size: 11px; padding: 4px 5px; border-radius: 4px; }
 #composer-mode { font-size: 10px; }
+#composer-permission { color: var(--ar-dim); white-space: nowrap; flex-shrink: 0; }
+#composer-mode:hover, #composer-permission:hover, #composer-effort:hover { background: var(--room-soft); color: var(--ar-text); }
+#composer-menu { position: fixed; z-index: 110; width: 260px; max-width: calc(100vw - 16px); max-height: min(410px, 65vh); overflow: auto; padding: 6px; border: 1px solid var(--ar-line); border-radius: 10px; background: var(--ar-panel); box-shadow: 0 8px 30px #0002; }
+.composer-menu-title { padding: 9px 10px; font-size: 12px; color: var(--ar-dim); border-bottom: 1px solid var(--ar-line); }
+#composer-menu > button { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; width: 100%; padding: 10px; border: 0; background: transparent; border-radius: 5px; text-align: left; font-size: 13px; }
+#composer-menu > button:hover, #composer-menu > button[aria-checked="true"] { background: var(--room-selected); }
+#composer-menu small { width: 100%; font-size: 10px; overflow-wrap: anywhere; margin-top: 5px; }
+#composer-menu .hint { padding: 4px 10px; font-size: 11px; line-height: 1.6; }
+#approval-panel { flex-shrink: 0; max-height: 32vh; overflow: auto; padding: 8px 24px; border-top: 1px solid var(--ar-line); }
+.approval-card { background: var(--ar-panel); border: 1px solid var(--ar-line); padding: 12px; border-radius: 8px; margin-bottom: 5px; font-size: 13px; }
+.approval-card pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 120px; overflow: auto; font: inherit; font-size: 12px; }
+.approval-card > div { display: flex; gap: 8px; justify-content: flex-end; }
+.approval-card button { font-size: 12px; padding: 7px 12px; }
+/* Blank native conversations use their own launch form; ongoing chat stays flush. */
+#conversation-view[data-empty="true"]:is([data-harness="dsh"], [data-harness="qoder"], [data-harness="zcode"]) .composer,
+#conversation-view[data-empty="true"][data-harness="codex"] .composer { width: calc(100% - 56px); max-width: 1200px; margin: 0 auto 45px; border: 1px solid var(--ar-line); border-radius: 22px; padding: 15px 18px; box-shadow: 0 3px 18px #00000006; }
+#conversation-view[data-empty="true"]:is([data-harness="dsh"], [data-harness="qoder"], [data-harness="zcode"]) .composer { grid-template-areas: "draft draft draft" "attachments attachments attachments" "tools options send"; }
+#conversation-view[data-empty="true"]:is([data-harness="dsh"], [data-harness="qoder"], [data-harness="zcode"]) #harness-context { position: absolute; left: 9px; bottom: calc(100% + 12px); max-width: calc(100% - 18px); }
+#conversation-view[data-empty="true"] .harness-welcome { padding-bottom: 70px; }
+#conversation-view[data-empty="true"] .composer-chip { font-size: 12px; }
+@media (max-width: 1150px) {
+  #conversation-view[data-empty="true"]:is([data-harness="dsh"], [data-harness="qoder"], [data-harness="zcode"]) .composer { grid-template-areas: "draft draft" "attachments attachments" "options options" "tools send"; }
+  .composer .composer-tools { flex-wrap: wrap; }
+}
+@media (max-width: 760px) {
+  #conversation-view[data-empty="true"]:is([data-harness="dsh"], [data-harness="qoder"], [data-harness="zcode"]) .composer,
+  #conversation-view[data-empty="true"][data-harness="codex"] .composer { width: calc(100% - 20px); margin-bottom: 15px; padding: 10px; border-radius: 15px; }
+  #conversation-view[data-empty="true"] .composer-chip { font-size: 10px; }
+  #composer-permission { font-size: 10px; }
+  #approval-panel { padding: 6px 10px; }
+}
 #harness-options { max-width: 350px; }
 #composer-model { max-width: 245px; }
 #activity { font-size: 10px; max-width: 55%; }
@@ -139,7 +172,7 @@ dialog::backdrop { backdrop-filter: none; background: #0005; }
 @media (max-width: 1150px) {
   .shell { grid-template-columns: 54px 250px minmax(0, 1fr); }
   .composer[data-harness="codex"] { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "draft draft" "attachments attachments" "options options" "tools send" "context context"; }
-  .composer[data-harness="dsh"] { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "context context" "draft draft" "attachments attachments" "options options" "tools send"; }
+  .composer:is([data-harness="dsh"], [data-harness="qoder"], [data-harness="zcode"]) { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "context context" "draft draft" "attachments attachments" "options options" "tools send"; }
   #harness-options { max-width: 100%; }
   .message-main { max-width: calc(100% - 48px); }
 }
@@ -169,7 +202,7 @@ dialog::backdrop { backdrop-filter: none; background: #0005; }
   .message .avatar { width: 28px; height: 28px; font-size: 12px; }
   .message-main { max-width: calc(100% - 36px); }
   .bubble { font-size: 13px; padding: 9px 11px; }
-  .composer, .composer[data-harness="codex"], .composer[data-harness="dsh"] { padding: 10px 13px; min-height: 180px; }
+  .composer, .composer[data-harness="codex"], .composer:is([data-harness="dsh"], [data-harness="qoder"], [data-harness="zcode"]) { padding: 10px 13px; min-height: 180px; }
   .composer #draft, .composer:not([data-harness="generic"]) #draft { min-height: 75px; height: 75px; font-size: 13px; }
   .composer-chip { font-size: 10px; padding: 4px 2px; }
   #composer-model { max-width: 70%; }
@@ -207,11 +240,11 @@ dialog::backdrop { backdrop-filter: none; background: #0005; }
   .message .avatar { display: none; }
   .message-main { max-width: 94%; }
   .messages { padding: 16px 11px; }
-  .composer, .composer[data-harness="codex"], .composer[data-harness="dsh"] { padding: 8px 10px; }
+  .composer, .composer[data-harness="codex"], .composer:is([data-harness="dsh"], [data-harness="qoder"], [data-harness="zcode"]) { padding: 8px 10px; }
   .composer .composer-tools { gap: 1px; }
   .composer .composer-tools .tool-button { padding: 5px; }
   .composer #send, .composer:not([data-harness="generic"]) #send { min-width: 48px; padding: 6px 10px; font-size: 11px; }
-  #harness-context, .composer[data-harness="codex"] #harness-context, .composer[data-harness="dsh"] #harness-context { gap: 3px; }
+  #harness-context, .composer[data-harness="codex"] #harness-context, .composer:is([data-harness="dsh"], [data-harness="qoder"], [data-harness="zcode"]) #harness-context { gap: 3px; }
   #composer-workspace { max-width: 100%; }
   #composer-mode { font-size: 9px; }
   #composer-model { max-width: 65%; }

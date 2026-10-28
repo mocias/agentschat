@@ -16,22 +16,31 @@ const { AgentRoom } = require('../lib/room.cjs');
   const agents = [
     { id: 'codex-writer', label: '创作搭子', backend: 'codex', model: 'codex-demo', modelName: 'Codex · 演示模型', effort: 'high' },
     { id: 'dsh-researcher', label: '研究伙伴', backend: 'dsh', model: 'dsh-demo', modelName: 'DeepSeek · 演示模型', effort: 'low' },
-    { id: 'reviewer', label: '审查伙伴', backend: 'qoder' },
+    { id: 'reviewer', label: '审查伙伴', backend: 'claude' },
+    { id: 'qoder-helper', label: 'Qoder 伙伴', backend: 'qoder', model: 'qoder-demo', modelName: 'Qoder · 演示模型' },
+    { id: 'zcode-helper', label: 'ZCode 伙伴', backend: 'zcode', model: 'zcode-demo', modelName: 'ZCode · 演示模型' },
   ].map(a => ({ ...a, workspace: path.join(workspaceRoot, a.id), createdAt: '2026-10-23T09:00:00.000Z' }));
   for (const a of agents) { fs.mkdirSync(a.workspace, { recursive: true }); fs.writeFileSync(path.join(a.workspace, 'keep.txt'), 'Workspace files stay here.'); }
   const conversations = agents.flatMap(a => [
     { id: a.id + '-old', title: a.label },
-    ...(a.backend === 'qoder' ? [] : [{ id: a.id + '-second', title: a.backend === 'codex' ? '整理下一版设计思路' : '寻找灵感与参考', titleSource: 'custom' }]),
+    ...(a.backend === 'claude' ? [] : [{ id: a.id + '-second', title: a.backend === 'codex' ? '整理下一版设计思路' : '寻找灵感与参考', titleSource: 'custom' }]),
   ].map(c => ({ ...c, kind: 'direct', agentIds: [a.id], updatedAt: '2026-10-23T09:00:00.000Z' })));
   conversations.push({ id: 'group', kind: 'group', title: '一起打磨好想法', agentIds: agents.map(a => a.id), updatedAt: '2026-10-23T08:00:00.000Z' });
   for (const c of conversations) fs.writeFileSync(path.join(dataDir, 'rooms', c.id + '.log.jsonl'), JSON.stringify({ id: 'm1', seq: 1, ts: c.updatedAt, kind: 'user', authorId: 'user', authorLabel: '你', text: '这是「' + c.title + '」的隔离演示历史。', visibility: 'public' }) + '\n');
   fs.writeFileSync(path.join(dataDir, 'catalog.json'), JSON.stringify({ version: 1, agents, conversations }));
   fs.writeFileSync(path.join(dataDir, 'discovery-consent.json'), JSON.stringify({ choice: 'manual' }));
+  if (process.env.UI_NATIVE_CONTROLS === '1') {
+    const { BackendDiscovery } = require('../standalone/discovery.cjs');
+    const rows = await new BackendDiscovery({ dir: process.env.CONTROLS_DISCOVERY_DATA || home }).scan();
+    const preferences = Object.fromEntries(['codex', 'dsh'].map(id => { const found = rows.find(r => r.id === id)?.selected; assert.ok(found?.path, id + ' unavailable'); return [id, { path: found.path }]; }));
+    fs.writeFileSync(path.join(dataDir, 'backend-preferences.json'), JSON.stringify(preferences));
+  }
   const protectedFiles = [...conversations.map(c => path.join(dataDir, 'rooms', c.id + '.log.jsonl')), ...agents.map(a => path.join(a.workspace, 'keep.txt'))];
   const hash = file => createHash('sha256').update(fs.readFileSync(file)).digest('hex');
   const before = protectedFiles.map(hash);
   const models = backend => ({ selected: backend + '-demo', models: [{ id: backend + '-demo', name: '演示模型', efforts: ['low', 'high'], defaultEffort: 'low' }] });
   let nativeStarts = 0, modelRequests = 0, browser, app, desktop, page;
+  const fixtureRooms = new Map();
   const errors = [], checks = [];
   const packaged = process.env.UI_PACKAGED === '1';
   async function launch() {
@@ -45,8 +54,12 @@ const { AgentRoom } = require('../lib/room.cjs');
     } else {
       app = createApplication({ dataDir, workspaceRoot, pollScheduling: false, discoveryInventory: async () => ({ rows: [] }),
         inspectDesktop: () => ({ status: 'pending', detail: '隔离演示' }), registerAgent: async () => ({}), queryModels: async backend => { modelRequests++; return models(backend); },
+        querySessionControls: async backend => ['qoder', 'zcode'].includes(backend) ? ({ backend, presets: [{ id: 'native', label: '原生会话' }], permissions: (backend === 'qoder' ? ['default', 'dontAsk'] : ['build']).map(id => ({ id, label: id === 'dontAsk' ? '拒绝未授权操作' : '逐次确认' })) }) : ({ backend,
+          presets: (backend === 'dsh' ? ['standard', 'minimal'] : ['default', 'plan']).map(id => ({ id, label: ({ standard: '标准模式', minimal: '精简模式', default: '默认模式', plan: '规划模式' })[id] })),
+          permissions: ['read-only', 'workspace-write', 'danger-full-access'].map(id => ({ id, label: ({ 'read-only': '只读', 'workspace-write': '工作区内修改', 'danger-full-access': '完整访问' })[id] })) }),
         roomFactory: settings => {
           const room = new AgentRoom(settings);
+          fixtureRooms.set(settings.id, room);
           for (const backend of new Set(settings.members.map(a => a.backend))) room.pools.set(backend, { running: false, stop: async () => {}, getThread: () => null,
             start: async () => { nativeStarts++; throw new Error('Native harness disabled in UI check'); } });
           return room;
@@ -72,6 +85,9 @@ const { AgentRoom } = require('../lib/room.cjs');
     await page.locator('[data-open-agent="codex-writer"]').click();
     await page.locator('[data-session="codex-writer-second"]').waitFor({ state: 'visible' });
     await page.locator('#messages .message').waitFor();
+    await page.locator('[data-open-agent="codex-writer"]').hover();
+    const selectedColors = await page.locator('[data-open-agent="codex-writer"]').evaluate(el => ({ inner: getComputedStyle(el).backgroundColor, outer: getComputedStyle(el.parentElement).backgroundColor }));
+    assert.ok(selectedColors.inner === 'rgba(0, 0, 0, 0)' || selectedColors.inner === selectedColors.outer, JSON.stringify(selectedColors));
     assert.equal(await page.locator('.composer').getAttribute('data-harness'), 'codex');
     assert.match(await page.locator('#messages').textContent(), /创作搭子/);
     await page.locator('#draft').fill('属于旧会话的草稿');
@@ -85,7 +101,7 @@ const { AgentRoom } = require('../lib/room.cjs');
     checks.push('Agent expands history; session switching keeps draft and attachment ownership');
     await page.locator('[data-open-agent="dsh-researcher"]').click();
     assert.equal(await page.locator('.composer').getAttribute('data-harness'), 'dsh');
-    assert.match(await page.locator('#composer-mode').textContent(), /标准对话/);
+    assert.match(await page.locator('#composer-mode').textContent(), /标准模式/);
     const oldIds = (await read('/catalog')).conversations.map(c => c.id);
     await page.locator('#new-session').click();
     await page.waitForFunction(() => document.querySelector('#chat-title').textContent === '新会话');
@@ -104,15 +120,43 @@ const { AgentRoom } = require('../lib/room.cjs');
     assert.equal(await page.locator('[data-open-agent="dsh-researcher"] .pin-mark').count(), 0);
     checks.push('New session is blank and attached to the right Agent; title and pin do not rename Agent');
     if (!packaged) {
+      await page.locator('#composer-mode').click();
+      await page.getByRole('menuitemradio', { name: '精简模式', exact: true }).waitFor();
+      await screenshot('dsh-preset-menu.png');
+      await page.getByRole('menuitemradio', { name: '精简模式', exact: true }).click();
+      await page.waitForFunction(() => document.querySelector('#composer-mode').textContent.includes('精简模式'));
+      await page.locator('#composer-permission').click();
+      await page.getByRole('menuitemradio', { name: '工作区内修改', exact: true }).waitFor();
+      await screenshot('dsh-permission-menu.png');
+      await page.getByRole('menuitemradio', { name: '工作区内修改', exact: true }).click();
+      await page.waitForFunction(() => document.querySelector('#composer-permission').textContent.includes('工作区内修改'));
+      await read('/conversation?id=' + fresh.id);
+      const pendingDecision = fixtureRooms.get(fresh.id).requestApproval('dsh', 'session/request_permission', { toolCall: { title: '创建演示文件', description: '本地测试请求，不会实际写文件' } });
+      await page.locator('#approval-panel').waitFor({ state: 'visible' });
+      await page.getByRole('button', { name: '允许这一次', exact: true }).click();
+      assert.equal(await pendingDecision, true);
+      await page.locator('#approval-panel').waitFor({ state: 'hidden' });
       await page.locator('#composer-effort').click();
-      await page.locator('[name="effort"]:enabled').waitFor();
-      await page.locator('[name="effort"]').selectOption('high');
-      await page.locator('#modal-submit').click(); await page.locator('#modal').waitFor({ state: 'hidden' });
+      await page.getByRole('menuitemradio', { name: 'high', exact: true }).click();
+      await page.waitForFunction(() => document.querySelector('#composer-effort').textContent.includes('high'));
       assert.match(await page.locator('#composer-effort').textContent(), /high/);
       await page.locator('[data-session="dsh-researcher-old"]').click();
       assert.match(await page.locator('#composer-effort').textContent(), /low/);
       await page.locator(`[data-session="${fresh.id}"]`).click();
       checks.push('Advertised reasoning option applies only to the selected conversation through real HTTP');
+      checks.push('DSH preset and permission menus save per conversation; explicit one-time approval completes through real HTTP/SSE');
+    }
+    if (packaged && process.env.UI_NATIVE_CONTROLS === '1') {
+      await page.locator('#composer-mode').click();
+      await page.getByRole('menuitemradio', { name: '精简模式', exact: true }).click();
+      await page.waitForFunction(() => document.querySelector('#composer-mode').textContent.includes('精简模式'));
+      await page.locator('#composer-permission').click();
+      await page.getByRole('menuitemradio', { name: '工作区内修改', exact: true }).waitFor();
+      await screenshot('dsh-native-permissions.png');
+      await page.getByRole('menuitemradio', { name: '工作区内修改', exact: true }).click();
+      await page.waitForFunction(() => document.querySelector('#composer-permission').textContent.includes('工作区内修改'));
+      assert.deepEqual((await read('/session-controls?room=' + fresh.id)).config, { preset: 'minimal', permission: 'workspace-write' });
+      checks.push('Packaged UI reads real DSH preset/permission catalogs and persists the selected configuration without prompting a model');
     }
     await page.locator('#search').fill('我的调研');
     assert.equal(await page.locator('[data-open-agent]').count(), 1);
@@ -124,9 +168,34 @@ const { AgentRoom } = require('../lib/room.cjs');
     await page.locator('#new-session').click(); await page.locator('.harness-welcome').waitFor();
     assert.equal(await page.locator('.composer').getAttribute('data-harness'), 'codex');
     await screenshot('codex-new-session.png');
+    if (!packaged || process.env.UI_NATIVE_CONTROLS === '1') {
+      await page.locator('#composer-mode').click();
+      await page.getByRole('menuitemradio', { name: '规划模式', exact: true }).waitFor();
+      await screenshot('codex-mode-menu.png');
+      await page.getByRole('menuitemradio', { name: '规划模式', exact: true }).click();
+      await page.waitForFunction(() => document.querySelector('#composer-mode').textContent.includes('规划模式'));
+      await page.locator('#composer-permission').click();
+      page.once('dialog', dialog => dialog.dismiss());
+      await page.getByRole('menuitemradio', { name: '完整访问', exact: true }).click();
+      assert.match(await page.locator('#composer-permission').textContent(), /只读/);
+      await page.keyboard.press('Escape');
+      checks.push('Codex default/plan menu is routed separately; cancelled full-access confirmation keeps read-only');
+    }
     checks.push('Search exposes matching nested sessions; group and other harness composer stay generic');
-    for (const backend of ['codex', 'dsh']) {
-      await page.locator(`[data-open-agent="${backend === 'codex' ? 'codex-writer' : 'dsh-researcher'}"]`).click();
+    for (const backend of ['codex', 'dsh', 'qoder', 'zcode']) {
+      await page.locator(`[data-open-agent="${({codex:'codex-writer',dsh:'dsh-researcher',qoder:'qoder-helper',zcode:'zcode-helper'})[backend]}"]`).click();
+      if (['qoder', 'zcode'].includes(backend)) {
+        assert.equal(await page.locator('.composer').getAttribute('data-harness'), backend);
+        await page.locator('#new-session').click(); await page.locator('.harness-welcome').waitFor();
+        assert.equal(await page.locator('#composer-mode').isVisible(), false);
+        if (!packaged) {
+          await page.locator('#composer-permission').click();
+          await page.getByRole('menuitemradio', { name: '逐次确认', exact: true }).waitFor();
+          await screenshot(backend + '-permissions.png');
+          await page.getByRole('menuitemradio', { name: backend === 'qoder' ? '拒绝未授权操作' : '逐次确认', exact: true }).click();
+          await page.waitForFunction(() => !document.querySelector('#composer-menu'));
+        }
+      }
       for (const width of [1440, 1000, 720, 390]) {
         await page.setViewportSize({ width, height: 960 });
         const metrics = await page.evaluate(() => {
@@ -145,7 +214,7 @@ const { AgentRoom } = require('../lib/room.cjs');
       const reset = page.waitForResponse(r => r.url().endsWith('/api/theme') && r.request().method() === 'POST');
       await page.locator('[data-preset="paper"]').click(); await reset; await page.locator('#close-modal').click();
     }
-    checks.push('Codex and DSH at 1440/1000/720/390px keep send, draft and model controls in bounds; light/dark screenshots');
+    checks.push('All four session adapters at 1440/1000/720/390px keep send, draft and model controls in bounds; light/dark screenshots');
     await page.locator(`[data-session="${fresh.id}"]`).click();
     await page.reload();
     await page.waitForFunction(() => document.querySelector('#chat-title').textContent === '我的调研会话');
@@ -159,7 +228,7 @@ const { AgentRoom } = require('../lib/room.cjs');
     assert.deepEqual(protectedFiles.map(hash), before);
     assert.equal(nativeStarts, 0); assert.deepEqual(errors, []);
     checks.push('Reload restores expanded/selected session; existing history and workspace SHA-256 unchanged');
-    const report = { ok: true, home, packaged, checks, nativeStarts, modelRequests, browserErrors: errors };
+    const report = { ok: true, home, packaged, nativeControlCatalogs: process.env.UI_NATIVE_CONTROLS === '1', checks, fixtureNativeStarts: packaged ? null : nativeStarts, modelRequests, browserErrors: errors };
     fs.writeFileSync(path.join(home, 'report.json'), JSON.stringify(report, null, 2)); console.log(JSON.stringify(report));
   } finally { await browser?.close(); await desktop?.close(); await app?.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -9,7 +9,7 @@ function choices(option) {
 }
 async function queryModels(id, launch, cwd, selected) {
   if (!harnessIds().includes(id)) throw new Error('该后端尚未接入模型查询');
-  const Pool = id === 'codex' ? CodexThreadPool : launch?.workbuddySupervisor ? WorkbuddyPool : AcpPool;
+  const Pool = id === 'zcode' ? require('../lib/zcode-pool.cjs').ZcodePool : id === 'codex' ? CodexThreadPool : launch?.workbuddySupervisor ? WorkbuddyPool : AcpPool;
   const pool = new Pool({ ...launch, cwd });
   try {
     await pool.start();
@@ -24,7 +24,7 @@ async function queryModels(id, launch, cwd, selected) {
     const modelOption = config.find(o => o.category === 'model');
     const models = choices(modelOption).map(m => ({ id: m.value, name: m.name || m.value, provider: m.provider || '', efforts: [], defaultEffort: null }));
     const wanted = selected || (pool.desktopCatalogStatus?.source === 'desktop-cache' && !models.some(m => m.id === modelOption?.currentValue) ? models[0]?.id : modelOption?.currentValue);
-    if (!models.some(m => m.id === wanted)) throw new Error('后端没有返回可用的所选模型');
+    if (!models.some(m => m.id === wanted)) throw new Error(id === 'zcode' ? 'ZCode app-server 未返回可用模型。请先在原生 ZCode CLI 配置模型/登录；桌面登录不等于 CLI 模型已就绪。' : '后端没有返回可用的所选模型');
     // Claude exposes no model-dependent effort options. A catalogue read must
     // not call set_model (the CLI may validate it with an upstream request).
     // Access and the fixed model are still enforced when opening the real chat.

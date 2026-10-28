@@ -1,4 +1,7 @@
 'use strict';
+if (process.env.AGENT_ROOM_ZCODE_BRIDGE === '1') {
+  require('../standalone/zcode-desktop-host.cjs');
+} else {
 const { app, BrowserWindow, Menu, dialog, shell, session } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -123,4 +126,6 @@ if (!app.requestSingleInstanceLock()) {
       app.exit(0);
     });
   });
+}
+
 }

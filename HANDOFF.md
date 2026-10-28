@@ -1,6 +1,6 @@
 # agentschat — Handoff
 
-交接更新：2026-10-24。当前源码和本机安装版本均为 0.1.34；GitHub 仓库已改名 agentschat，界面采用微信风格三栏布局，验收和产物见文末最新节。0.1.33 的 Codex / DSH 多会话和独立输入布局继续保留。0.1.32 的 Agent 共享记忆和工作区隔离继续保留。本机已从 0.1.31 更新并启动，原聊天和现存工作区保留；升级前已有一个 DSH 工作区缺失，未自动重建。发布目标为 `agentschat/main`（https://github.com/mocias/agentschat），不是 `origin/master`。优先阅读文末最新节及 AGENTS.md；前文各版本是历史记录，不能作为当前状态。产品显示名改为 agentschat；保留内部 npm 包名 dsh-agent-room、原 MIT LICENSE、旧安装/数据标识和插件入口兼容。本文区分已实现、已验证和未完成事项。
+交接更新：2026-10-28。当前源码和本机安装均为 0.1.36；最新 ZCode/Qoder 接入见文末及 docs/ZCODE_QODER_INTEGRATION.md。GitHub 仓库已改名 agentschat，界面采用微信风格三栏布局，验收和产物见文末最新节。0.1.33 的 Codex / DSH 多会话和独立输入布局继续保留。0.1.32 的 Agent 共享记忆和工作区隔离继续保留。本机已从 0.1.34 更新至 0.1.35，实际启动检查通过，原聊天和现存工作区保留；升级前已有一个 DSH 工作区缺失，未自动重建。发布目标为 `agentschat/main`（https://github.com/mocias/agentschat），不是 `origin/master`。优先阅读文末最新节及 AGENTS.md；前文各版本是历史记录，不能作为当前状态。产品显示名改为 agentschat；保留内部 npm 包名 dsh-agent-room、原 MIT LICENSE、旧安装/数据标识和插件入口兼容。本文区分已实现、已验证和未完成事项。
 
 0.1.8 更新：默认工作区改为桌面安装目录/agents/backend/Agent名称；浏览器默认源码根/agents，支持 AGENT_ROOM_WORKSPACE_ROOT；旧路径不迁移。添加删除操作，默认保留文件，删除文件需完整路径确认，禁止共用/嵌套工作区、磁盘根、应用数据祖先、符号链接/联接。删除联系人移除单聊入口与群成员，保留群聊记录、底层日志和原后端记录。安装包构建不等于用户已安装版本更新。
 
@@ -618,3 +618,42 @@ WorkBuddy 原生 CLI 默认角色仅列四档。实验表明 web-ui header + mod
 升级前一个 DSH 工作区目录已经不存在，备份中明确记录缺失；升级和检查均未重建、还原或改变该路径。这个旧状态不算升级造成的数据丢失，也不代表该 DSH Agent 已验证可正常生成。需要后续由用户指定工作区后再继续验证。
 
 桌面与开始菜单快捷方式先备份再改名为 agentschat，目标仍是 `D:/Agent Room/Agent Room.exe`；完成检查后重新启动，新窗口标题为 agentschat。未修改卸载注册项、安装根目录或其他应用。证据：`output/local-update-0.1.34-7ngkR1/prepare.json`、`installed-update.json`、`installed-startup.json`、`shortcuts.json`。本次运行代码未改，不重复 130 项套件；仅做文档链接核对、精确升级与真实启动/数据保留验收。前文“未改名/未替换正式安装”属于之前阶段，本节为最新状态。没有创建 GitHub Release 或上传个人数据、安装包。
+
+
+## 2026-10-24：0.1.35 原生权限/预设与新会话输入区
+
+修复选中 Agent 的内层按钮在悬停/聚焦时恢复灰底的问题；DSH 空会话使用上方工作区/预设、圆角输入卡片、底部权限和模型/推理的结构，Codex 独立显示默认/规划模式。权限、预设、推理均为真正可选的菜单，保存后更新后端配置；模型仍固定到 Agent。配置按会话保存，预设只在首条消息前可改，权限变更需空闲并释放旧运行态。新建原生会话默认只读；旧会话保持原行为，直到用户显式选择配置。
+
+新增 standalone/session-controls.cjs 统一能力目录和校验；Codex 从 collaborationMode/list 与 configRequirements/read 读取当前模式和限制，并传递 sandbox/approvalPolicy/collaborationMode。DSH 使用 standalone/dsh-session-controls.cjs 与 dsh-session-pool.cjs，在本应用拥有的 ACP 进程挂载安装自带预设服务，临时认证桥接应用原生 agentPresets/permissionPresets；不编辑用户原生 profile。预设应用后验证回显并重新应用固定模型，失败阻断发送，不伪造成功。当前 DSH 标准、程序化工具、精简可用；cordis 缺依赖禁用，桌面自定义预设未导入。
+
+lib/approval-requests.cjs 将权限请求绑定房间与随机请求 ID，界面仅允许一次或拒绝。原生工具标题/参数用于用户审阅，不能作为自动授权依据。回复结束、停止、释放、超时均清除请求；无效房间不能停止其他房间的确认。旧群聊与其他 harness 保持原权限规则。ACP/Codex 停止时显式释放管道，修复 Windows 原生能力探测完成后仍不退出的问题。
+
+最终验证：133/133 回归；原生 ASAR 空会话 report 为 output/native-session-controls-cRsACK/report.json；最终打包 UI（真实目录、保存、重启、四种宽度）为 output/playwright/agent-sessions-sZz3Vu/report.json。全部无真实模型生成。53 个源码文件与 ASAR 一致，0.1.34→0.1.35 增量在隔离副本上验证，完整安装包/增量/校验清单在 dist。真实工具执行和 Codex 规划回复未验收，不能把能力目录与协议测试称为真实模型端到端验证。详细报告和限制见 DESKTOP_VALIDATION.md 最新节。
+
+本机已更新到最终 0.1.35，真实启动确认名称/菜单/数据位置正常；当前为 4 位 Agent、6 个会话，39 个现存文件备份并验证保留。最终本机证据为 output/local-update-0.1.35-final-fZzto4/，初次 .34→.35 备份为 output/local-update-0.1.35-f2smOO/。用户原 dsh-1 工作区此前缺失，仍不重建；选择有效目录后才能读取原生配置。新增 README 隔离演示截图。此轮源码尚未提交或推送，GitHub 的已知最后交付仍为 356d4b7；不得把本地 0.1.35 当成已发布远端版本。
+
+
+## 2026-10-28：0.1.36 Qoder 多会话与 ZCode 桌面账号
+
+用户要求按现有 DSH/Codex 方案接入，并明确选择继续复用当前 ZCode 桌面账号。实现详情见 docs/ZCODE_QODER_INTEGRATION.md。
+
+Qoder/ZCode 纳入多会话与输入区：新建、命名、置顶、草稿/附件隔离、模型固定和推理设置。Qoder 使用真实 ACP 模式目录并验证回显，默认 default，yolo 需确认。ZCode 通过本应用拥有的无窗口 Electron helper 加载安装自带 Host/RPC，由原生服务读取桌面账号、模型资格与请求授权；不复制凭据，不修改安装包。Windows 3.16.3 被明确版本门控，首版只开放可核验的 build 模式。混合房间按 session 绑定各 Agent 工作区。修复停止 ACK 迟到结束下一轮的问题，并为 inputId/turnId 隔离增加回归。
+
+当前结果：140/140 回归；Qoder/ZCode 真实混合群各自返回 MIXED_ROOM_OK，session ID 独立；ZCode Start Plan GLM-5.3-Flash 真实流式回复通过。GLM-5.3 本轮曾返回 429 / 3009 并发限制，程序不自动换模型。真实 ZCode 宿主配合本地模拟模型，验证两会话、逐次拒绝/允许写入、停止及同会话续聊；这些本地模型检查与真实云回复分别记录。
+
+最终打包 EXE 的四种后端、四种宽度、深浅主题、重启恢复检查通过；ASAR 59 个文件与源码一致，原生 Qoder/ZCode 模型和权限目录读取通过，未请求生成。0.1.35→0.1.36 增量在隔离安装副本实跑，3 个程序文件校验一致，测试聊天和工作区保留。产物：dist/agentschat-Setup-0.1.36-x64.exe、dist/agentschat-Update-0.1.35-to-0.1.36-x64.zip、dist/SHA256SUMS-0.1.36.txt。
+
+证据：output/new-backends-final-tests.log；output/live-new-harnesses-room-9lW4M5/report.json；output/zcode-live-bjPG2m/report.json（仅单个真实生成会话）；output/native-new-harnesses-dl79Vy/report.json（拒绝）；output/native-new-harnesses-CUATJA/report.json（允许、停止及续聊）；output/playwright/appearance-6i8Rgt/report.json；output/playwright/agent-sessions-4AVbZG/report.json（源码）；output/playwright/agent-sessions-ZKbYKi/report.json（最终 EXE）；output/packaged-new-harnesses-KJ885q/report.json；output/release-0.1.36/incremental-validation.json。
+
+本机 D:/Agent Room 的实际 ASAR 仍为 0.1.35，没有覆盖当前安装；本轮未提交、推送或发布 GitHub。旧 0.1.35 未提交改动保留。尚未专项验收 ZCode 其他版本/平台、规划开关、电脑操作、MCP 投票、原生桌面历史展示，以及安装器覆盖用户实际安装。不要把协议/目录或本地模拟模型验收扩大为这些能力已支持。
+
+
+## 2026-10-28：0.1.36 本机更新与 GitHub 源码交付
+
+实际安装 D:/Agent Room 已从准确 0.1.35 基线应用已验收增量，Agent Room.exe、resources/app.asar、原注册名 Uninstall Agent Room.exe 三个程序文件均与最终 0.1.36 产物校验一致。更新前备份 43 个现存数据、工作区及桌面配置文件，152368 字节；原已缺失的 dsh-1 目录不重建。程序回滚备份保留在 D:/Agent Room/.update-backup-0.1.35-ff7d64c05fda4121b23a77b37f878284，数据备份与报告位于 output/local-update-0.1.36-ck3NXZ/。
+
+真实安装启动确认名称/菜单/版本为 agentschat 0.1.36，数据仍为 D:/agent room data；4 位 Agent、6 个会话的身份、模型、工作区、标题和权限配置保持一致。Qoder/ZCode 后端均被发现。未发送聊天或模型请求，浏览器错误为零，现存聊天/附件/工作区内容保留。41 个受保护文件哈希不变；另外两项是正常原生登记状态变化：DSH 回执 checkedAt 刷新，以及 WorkBuddy 登记队列更新，不能把这些运行状态描述为逐字节不变。验证后已重新打开应用。
+
+源码交付目标为 agentschat/main。提交包含此前本地 0.1.35 原生会话配置及 0.1.36 Qoder/ZCode 接入、测试、隔离演示图和文档；不包含用户数据、备份、测试输出、安装包、凭据或第三方运行时。140 项回归、最终包源码一致性、原生目录、真实混合群及增量检查沿用前一节对应证据；本次没有修改运行代码。完整 NSIS 安装/卸载未重跑，不创建 GitHub Release。前文“本机仍为 0.1.35 / 尚未推送”保留为实现阶段记录，当前安装和交付事实以本节与远端 main 为准。
+
+本次证据：output/local-update-0.1.36-ck3NXZ/prepare.json、installed-update.json、installed-startup.json、dynamic-receipt.json、reopened.json。

@@ -6,9 +6,14 @@ function savedObject(key) { try { return JSON.parse(localStorage.getItem(key)) |
 const expandedAgents = savedObject('agent-room:expanded-agents');
 const lastAgentSessions = savedObject('agent-room:last-agent-sessions');
 const composerAdapters = {
+  qoder: { placeholder: '描述你想让 Qoder 完成的任务…', heading: '和 Qoder 开始新会话' },
+  zcode: { placeholder: '描述你想让 ZCode 完成的任务…', heading: '和 ZCode 开始新会话' },
   codex: { placeholder: '你想和这位 Agent 一起做什么？', mode: '只读对话', heading: '我们要做什么？' },
   dsh: { placeholder: '描述你的想法，或引用文件开始对话…', mode: '标准对话', heading: '探索未尽之境' },
 };
+const permissionNames = { default: '逐次确认', acceptEdits: '自动批准编辑', auto: '原生安全判断', dontAsk: '拒绝未授权操作', yolo: '跳过权限确认', plan: '规划', build: '逐次确认', 'read-only': '只读', 'workspace-write': '工作区内修改', 'danger-full-access': '完整访问' };
+const presetNames = { native: '原生会话', standard: '标准模式', ptc: '程序化工具模式', minimal: '精简模式', cordis: 'Cordis 模式', default: '默认模式', plan: '规划模式' };
+const roomApprovals = new Map();
 function supportsSessions(agent) { return Boolean(composerAdapters[agent?.backend]); }
 function agentSessions(id) { return state.conversations.filter(c => c.kind === 'direct' && c.agentIds[0] === id).sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || b.updatedAt.localeCompare(a.updatedAt)); }
 function agentPinned(agent) { return agent.pinned ?? agentSessions(agent.id).some(c => c.pinned && !c.titleSource && c.title === agent.label); }
@@ -30,7 +35,7 @@ async function api(route, body, method = 'POST') {
 function toast(message) { $('#toast').textContent = message; $('#toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { $('#toast').hidden = true; }, 5000); }
 function avatar(agent, group = false) { return `<span class="avatar ${group ? 'group' : escapeHtml(agent?.backend || '')}">${group ? '☷' : escapeHtml((agent?.label || 'A').slice(0, 1).toUpperCase())}</span>`; }
 function harnessLabel(backend) {
-  return ({ codex: 'Codex', dsh: 'DSH', qoder: 'Qoder', claude: 'Claude Code', workbuddy: 'WorkBuddy', 'workbuddy-ai': 'WorkBuddy AI' })[backend] || backend || '';
+  return ({ zcode: 'ZCode', codex: 'Codex', dsh: 'DSH', qoder: 'Qoder', claude: 'Claude Code', workbuddy: 'WorkBuddy', 'workbuddy-ai': 'WorkBuddy AI' })[backend] || backend || '';
 }
 function harnessBadge(agent) {
   return agent?.backend ? `<span class="harness-badge ${escapeHtml(agent.backend)}">${escapeHtml(harnessLabel(agent.backend))}</span>` : '';
@@ -81,15 +86,72 @@ function renderConversationChrome() {
   const composer = $('.composer'); composer.dataset.harness = adapter ? agent.backend : 'generic';
   $('#conversation-view').dataset.harness = composer.dataset.harness;
   $('#harness-context').hidden = !adapter; $('#harness-options').hidden = !adapter;
+  $('#composer-permission').hidden = !adapter;
   $('#draft').placeholder = adapter?.placeholder || '发条消息，聊聊你的想法…';
   if (!adapter) return;
   $('#composer-workspace').textContent = '▱ ' + agent.label;
   $('#composer-workspace').title = agent.workspace || 'Agent 工作区';
-  $('#composer-mode').textContent = adapter.mode;
-  $('#composer-mode').title = agent.backend === 'codex' ? '当前会话使用只读权限' : '当前为 Room 对话模式，执行权限由 DSH 后端校验';
+  $('#composer-mode').textContent = (presetNames[row.sessionConfig?.preset] || (agent.backend === 'dsh' ? '标准模式' : '默认模式')) + ' ⌄';
+  $('#composer-mode').hidden = ['qoder', 'zcode'].includes(agent.backend);
+  $('#composer-mode').title = '选择当前会话的原生预设（首条消息前可更改）';
+  $('#composer-permission').textContent = (permissionNames[row.sessionConfig?.permission] || '原有权限') + ' ⌄';
+  $('#composer-permission').title = '只影响当前会话；打开菜单读取后端实际可用选项';
   $('#composer-model').textContent = agent.modelName || agent.model || '后端默认模型';
   $('#composer-model').title = '模型随 Agent 固定，可在 Agent 设置查看';
   $('#composer-effort').textContent = (row.efforts?.[agent.id] || agent.effort || '默认推理') + ' ⌄';
+}
+let composerMenuGeneration = 0;
+function closeComposerMenu() { composerMenuGeneration++; $('#composer-menu')?.remove(); }
+async function showComposerMenu(kind) {
+  closeComposerMenu(); closeTools(); hideMentions();
+  const roomId = state.current, row = state.conversations.find(c => c.id === roomId);
+  const agent = state.agents.find(a => a.id === row?.agentIds[0]); if (!agent || row.kind !== 'direct') return;
+  const anchor = $(kind === 'preset' ? '#composer-mode' : kind === 'permission' ? '#composer-permission' : '#composer-effort');
+  const generation = composerMenuGeneration;
+  const menu = document.createElement('div'); menu.id = 'composer-menu'; menu.setAttribute('role', 'menu'); menu.setAttribute('aria-label', { preset: '会话预设', permission: '会话权限', effort: '推理强度' }[kind]);
+  menu.innerHTML = '<p class="hint">正在读取后端选项…</p>'; document.body.append(menu);
+  const position = () => {
+    const rect = anchor.getBoundingClientRect();
+    menu.style.left = Math.max(8, Math.min(rect.left, innerWidth - menu.offsetWidth - 8)) + 'px';
+    menu.style.top = Math.max(8, rect.top - menu.offsetHeight - 8) + 'px';
+  }; position();
+  try {
+    let data, choices, selected, locked = false;
+    if (kind === 'effort') {
+      data = await api('/models', { backend: agent.backend, model: agent.model });
+      const model = data.models.find(m => m.id === agent.model);
+      choices = (model?.efforts || []).map(id => ({ id, label: id })); selected = row.efforts?.[agent.id] || agent.effort || model?.defaultEffort;
+    } else {
+      data = await api('/session-controls?room=' + encodeURIComponent(roomId));
+      choices = kind === 'preset' ? data.presets : data.permissions; selected = data.config[kind]; locked = kind === 'preset' && data.presetLocked;
+    }
+    if (generation !== composerMenuGeneration || state.current !== roomId || !menu.isConnected) return;
+    menu.innerHTML = '<div class="composer-menu-title">' + escapeHtml(menu.getAttribute('aria-label')) + '</div>' + choices.map(choice => `<button role="menuitemradio" aria-checked="${choice.id === selected}" data-choice="${escapeHtml(choice.id)}" ${choice.unavailable || locked ? 'disabled' : ''}><span>${escapeHtml(choice.label)}</span>${choice.id === selected ? '<span aria-hidden="true">✓</span>' : ''}${choice.unavailable ? `<small>${escapeHtml(choice.unavailable)}</small>` : ''}</button>`).join('') + '<p class="hint">' + (locked ? '预设已锁定，新建会话可选择其他模式。' : kind === 'permission' ? '仅用于当前会话，受后端权限约束。' : kind === 'preset' ? '使用后端原生预设，不修改全局默认设置。' : choices.length ? '仅用于当前会话。' : '当前模型未提供推理档位。') + '</p>';
+    position(); menu.querySelector('button:not(:disabled)')?.focus();
+    menu.onclick = async event => {
+      const button = event.target.closest('[data-choice]'); if (!button || button.disabled) return;
+      const value = button.dataset.choice; button.disabled = true;
+      try {
+        if (kind === 'effort') await api('/member-effort', { room: roomId, agent: agent.id, effort: value });
+        else {
+          const config = { ...data.config, [kind]: value };
+          if (['danger-full-access', 'yolo'].includes(config.permission) && data.config.permission !== config.permission && !window.confirm('完整访问允许此会话在工作区之外修改文件和执行命令。确认仅为此会话启用？')) { button.disabled = false; return; }
+          await api('/session-controls', { room: roomId, config, confirmFullAccess: config.permission === 'danger-full-access' });
+        }
+        closeComposerMenu(); await refresh(); if (state.current === roomId) { renderConversationChrome(); anchor.focus(); } toast('当前会话设置已保存');
+      } catch (error) { button.disabled = false; toast(error.message); }
+    };
+    menu.onkeydown = event => {
+      if (event.key === 'Escape') { closeComposerMenu(); anchor.focus(); return; }
+      if (!['ArrowUp', 'ArrowDown'].includes(event.key)) return;
+      event.preventDefault(); const buttons = [...menu.querySelectorAll('button:not(:disabled)')];
+      buttons[(buttons.indexOf(document.activeElement) + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length]?.focus();
+    };
+  } catch (error) { if (menu.isConnected && generation === composerMenuGeneration) { menu.innerHTML = '<p class="hint">' + escapeHtml(error.message) + '</p>'; position(); } }
+}
+function renderApprovals() {
+  const rows = roomApprovals.get(state.current) || [], panel = $('#approval-panel'); panel.hidden = !rows.length;
+  panel.innerHTML = rows.map(item => `<article class="approval-card"><strong>${escapeHtml(item.title)}</strong><pre>${escapeHtml(item.detail)}</pre><div><button data-approval="${escapeHtml(item.id)}" data-allow="false">拒绝</button><button data-approval="${escapeHtml(item.id)}" data-allow="true" class="primary">允许这一次</button></div></article>`).join('');
 }
 function attachmentsHtml(items, removable = false) {
   return items.map((file, index) => `<span class="file-chip">${file.isImage ? `<img alt="${escapeHtml(file.name)}" src="/api/attachment/${encodeURIComponent(file.id)}">` : '▤'}${escapeHtml(file.name)}${removable ? `<button data-remove-file="${index}" aria-label="移除 ${escapeHtml(file.name)}">×</button>` : ''}</span>`).join('');
@@ -101,6 +163,7 @@ function renderMessages() {
   const panel = $('#messages');
   const stick = panel.scrollHeight - panel.scrollTop - panel.clientHeight < 100;
   const log = state.snapshot?.log || [];
+  $('#conversation-view').dataset.empty = String(!log.some(r => ['user', 'agent'].includes(r.kind)));
   if (renderedRoom !== state.current) { panel.replaceChildren(); messageNodes.clear(); renderedRoom = state.current; }
   panel.querySelector('.empty-chat')?.remove();
   const retained = new Set();
@@ -203,6 +266,7 @@ function updateActivity() {
 async function openConversation(id) {
   const row = state.conversations.find(c => c.id === id); if (!row) return;
   hideMentions();
+  closeComposerMenu();
   closeTools();
   if (state.current) state.drafts[state.current] = $('#draft').value;
   state.current = id; state.snapshot = null; state.unread.delete(id);
@@ -216,11 +280,15 @@ async function openConversation(id) {
   $('#draft').value = state.drafts[id] || '';
   $('#messages').innerHTML = '<div class="empty-chat">正在读取聊天记录…</div>';
   renderList(); renderAttachments(); updateActivity();
+  renderApprovals();
   try {
     await persistNavigation().catch(error => toast('界面状态未保存：' + error.message));
     const result = await api('/conversation?id=' + encodeURIComponent(id));
     if (state.current !== id) return;
     state.snapshot = result.snapshot;
+    const approvals = await api('/approvals?room=' + encodeURIComponent(id));
+    if (state.current !== id) return;
+    roomApprovals.set(id, approvals.approvals); renderApprovals();
     if (result.pending) state.pending.add(id); else state.pending.delete(id);
     renderMessages(); $('#messages').scrollTop = $('#messages').scrollHeight;
   } catch (error) { if (state.current === id) $('#messages').textContent = error.message; toast(error.message); }
@@ -634,7 +702,18 @@ $('#conversations').onclick = event => {
 };
 $('#new-session').onclick = () => { const row = state.conversations.find(c => c.id === state.current); if (row) void newSession(row.agentIds[0]); };
 $('#session-actions').onclick = () => { const row = state.conversations.find(c => c.id === state.current), rect = $('#session-actions').getBoundingClientRect(); if (row) showSessionMenu(row, rect.left, rect.bottom); };
-$('#composer-workspace').onclick = $('#composer-model').onclick = $('#composer-effort').onclick = () => showMembers();
+$('#composer-workspace').onclick = $('#composer-model').onclick = () => showMembers();
+$('#composer-mode').onclick = () => void showComposerMenu('preset');
+$('#composer-permission').onclick = () => void showComposerMenu('permission');
+$('#composer-effort').onclick = () => void showComposerMenu('effort');
+document.addEventListener('pointerdown', event => { if (!event.target.closest('#composer-menu, #composer-mode, #composer-permission, #composer-effort')) closeComposerMenu(); });
+window.addEventListener('resize', closeComposerMenu);
+$('#approval-panel').onclick = async event => {
+  const button = event.target.closest('[data-approval]'); if (!button) return;
+  button.disabled = true;
+  try { await api('/approvals', { room: state.current, id: button.dataset.approval, allow: button.dataset.allow === 'true' }); }
+  catch (error) { button.disabled = false; toast(error.message); }
+};
 $('#close-modal').onclick = $('#cancel-modal').onclick = () => $('#modal').close();
 $('#modal').addEventListener('close', () => { $('#modal-content').onclick = null; $('#modal-content').onchange = null; });
 $('#modal-form').onsubmit = async (event) => { event.preventDefault(); if (!onSubmit) return; $('#modal-submit').disabled = true; try { await onSubmit(event.target); } catch (error) { $('#modal-error').textContent = error.message; } finally { $('#modal-submit').disabled = false; } };
@@ -665,12 +744,16 @@ events.onopen = async () => {
 events.onerror = () => { $('#connection').className = ''; $('#connection').innerHTML = '<i></i>连接中断，正在重连'; };
 events.onmessage = (message) => {
   const data = JSON.parse(message.data);
+  if (data.type === 'approvals') {
+    roomApprovals.set(data.room, data.approvals); if (data.room === state.current) renderApprovals();
+    else if (data.approvals.length) { state.unread.add(data.room); renderList(); toast('另一会话有操作等待你确认'); }
+  }
   if (data.type === 'poll-error') toast(data.message);
   if (data.type === 'polls' && data.room === state.current && state.snapshot) {
     state.snapshot.polls = data.polls; scheduleMessages(true);
     if ($('#modal').open && $('#poll-list')?.dataset.room === data.room) $('#poll-list').innerHTML = pollListHtml(data.polls);
   }
-  if (data.type === 'catalog') { state.agents = data.catalog.agents; state.conversations = data.catalog.conversations; clearMissingConversation(); renderList(); }
+  if (data.type === 'catalog') { state.agents = data.catalog.agents; state.conversations = data.catalog.conversations; clearMissingConversation(); renderList(); renderConversationChrome(); }
   if (data.type === 'snapshot' && data.room === state.current) { state.snapshot = data.snapshot; scheduleMessages(true); }
   if (data.type === 'message' && data.room !== state.current) { state.unread.add(data.room); renderList(); }
   if (data.type === 'pending') { if (data.pending) state.pending.add(data.room); else state.pending.delete(data.room); updateActivity(); }

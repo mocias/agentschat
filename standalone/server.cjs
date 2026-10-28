@@ -13,6 +13,8 @@ const { RoomApi, readJsonBody, sendJson, sendText } = require('../lib/server.cjs
 const { harnessIds } = require('../lib/harnesses.cjs');
 const { BackendDiscovery } = require('./discovery.cjs');
 const { queryModels } = require('./models.cjs');
+const { defaultSessionConfig, querySessionControls, validateSessionConfig } = require('./session-controls.cjs');
+const { ApprovalRequests } = require('../lib/approval-requests.cjs');
 const { searchHistory, exportHistory } = require('./history.cjs');
 const { createDataLocation } = require('./data-location.cjs');
 const { chooseWorkspace, assertWorkspace, assertDeletable } = require('./workspaces.cjs');
@@ -30,7 +32,7 @@ function createApplication(options = {}) {
   let catalog = fs.existsSync(catalogFile) ? JSON.parse(fs.readFileSync(catalogFile, 'utf8')) : { version: 1, agents: [], conversations: [] };
   // Older releases stored the Agent's pin on its sole direct conversation.
   // Materialize it independently before any session pin can change that meaning.
-  catalog.agents = catalog.agents.map(agent => !['codex', 'dsh'].includes(agent.backend) || typeof agent.pinned === 'boolean' ? agent : {
+  catalog.agents = catalog.agents.map(agent => !['codex', 'dsh', 'qoder', 'zcode'].includes(agent.backend) || typeof agent.pinned === 'boolean' ? agent : {
     ...agent, pinned: catalog.conversations.some(c => c.kind === 'direct' && c.agentIds[0] === agent.id && c.pinned),
   });
   if (!fs.existsSync(catalogFile)) fs.writeFileSync(catalogFile, JSON.stringify(catalog, null, 2));
@@ -55,6 +57,22 @@ function createApplication(options = {}) {
   const syncingAgents = new Set();
   const registrationTasks = new Map();
   const modelCache = new Map();
+  const controlCache = new Map();
+  const approvals = new ApprovalRequests(publish);
+  async function controlsFor(agent, refresh = false) {
+    const key = JSON.stringify([agent.backend, agent.workspace]);
+    const cached = controlCache.get(key);
+    if (!refresh && cached && Date.now() - cached.at < 30000) return cached.value;
+    const backend = (await discovery.scan()).find(r => r.id === agent.backend);
+    if (!backend?.selected && !options.querySessionControls) throw new Error('后端未配置，无法读取原生会话选项');
+    // Respect project-scoped Codex requirements; never recreate a missing workspace.
+    if (!options.querySessionControls) {
+      checkWorkspace(agent);
+      if (!agent.workspace || !fs.existsSync(agent.workspace)) throw new Error('工作区已不存在，请先在 Agent 设置中选择有效目录');
+    }
+    const value = await (options.querySessionControls || querySessionControls)(agent.backend, backend?.selected?.launch, agent.workspace || dataDir, dataDir);
+    controlCache.set(key, { at: Date.now(), value }); return value;
+  }
   async function modelsFor(id, model, refresh = false) {
     if (!harnessIds().includes(id)) throw new Error('该后端尚未接入模型查询');
     const key = JSON.stringify([id, model || null]);
@@ -167,6 +185,8 @@ function createApplication(options = {}) {
     const members = row.agentIds.map((key) => ({ ...catalog.agents.find((agent) => agent.id === key),
       ...(row.efforts && Object.hasOwn(row.efforts, key) ? { effort: row.efforts[key] } : {}) }));
     const room = factory({ id, title: row.title, kind: row.kind, members, backend: members[0]?.backend || 'codex', memory, checkWorkspace,
+      sessionConfig: row.sessionConfig || null,
+      requestApproval: (backend, method, params) => approvals.request(id, backend, method, params),
       createAlarms: (roomId, creatorId, commands) => alarms.createBatch(roomId, creatorId, commands),
       ...(row.kind === 'group' ? {
         pollTools: member => pollBroker.bind(id, member.id),
@@ -203,6 +223,7 @@ function createApplication(options = {}) {
     });
     room.on('update', (snapshot) => publish({ type: 'snapshot', room: id, snapshot: api._publicSnapshot(snapshot) }));
     room.on('stream', (event) => {
+      if (event.type === 'agent-end') approvals.cancel(id);
       publish({ type: 'stream', room: id, event });
       if (event.type === 'agent-end' && event.error) {
         const name = members.find((member) => member.id === event.memberId)?.label || 'Agent';
@@ -224,6 +245,7 @@ function createApplication(options = {}) {
     return state;
   }
   async function release(state) {
+    approvals.cancel(state.room.id);
     pollBroker.revokeRoom(state.room.id);
     if (state.room.tickTimer) clearInterval(state.room.tickTimer);
     if (state.room._groupTimer) clearTimeout(state.room._groupTimer);
@@ -378,6 +400,38 @@ function createApplication(options = {}) {
         const body = await readJsonBody(req);
         return sendJson(res, 200, await modelsFor(body.backend, body.model, Boolean(body.refresh)));
       }
+      if (req.method === 'GET' && route === '/api/session-controls') {
+        const row = conversation(url.searchParams.get('room'));
+        const agent = catalog.agents.find(a => row.kind === 'direct' && row.agentIds[0] === a.id);
+        if (!agent || !defaultSessionConfig(agent.backend)) throw new Error('此会话不支持原生输入配置');
+        const capabilities = await controlsFor(agent, url.searchParams.get('refresh') === '1');
+        const active = await runtime(row.id, true);
+        return sendJson(res, 200, { ...capabilities, config: row.sessionConfig || defaultSessionConfig(agent.backend), legacy: !row.sessionConfig,
+          presetLocked: active.room.log.some(record => record.kind === 'user'), model: agent.modelName || agent.model || '后端默认' });
+      }
+      if (req.method === 'POST' && route === '/api/session-controls') {
+        const body = await readJsonBody(req), row = conversation(body.room);
+        const agent = catalog.agents.find(a => row.kind === 'direct' && row.agentIds[0] === a.id);
+        if (!agent || !defaultSessionConfig(agent.backend)) throw new Error('此会话不支持原生输入配置');
+        const config = validateSessionConfig(body.config, await controlsFor(agent));
+        const active = await runtime(row.id, true), current = conversation(row.id);
+        if (configuring || active.pending || active.room.snapshot().busy.length || approvals.list(row.id).length) throw new Error('请等待当前会话完成或停止回复后修改');
+        const old = current.sessionConfig || defaultSessionConfig(agent.backend);
+        if (old.preset !== config.preset && active.room.log.some(record => record.kind === 'user')) throw new Error('预设需在首条消息前选择，请新建会话使用其他预设');
+        if (['danger-full-access', 'yolo'].includes(config.permission) && old.permission !== config.permission && body.confirmFullAccess !== true) throw new Error('请明确确认完整访问权限');
+        configuring = true;
+        try {
+          await release(active); runtimes.delete(row.id);
+          save({ ...catalog, conversations: catalog.conversations.map(c => c.id === row.id ? { ...c, sessionConfig: config, nativeSessions: {} } : c) });
+          changed(); return sendJson(res, 200, { config });
+        } finally { configuring = false; }
+      }
+      if (req.method === 'GET' && route === '/api/approvals') {
+        const row = conversation(url.searchParams.get('room')); return sendJson(res, 200, { approvals: approvals.list(row.id) });
+      }
+      if (req.method === 'POST' && route === '/api/approvals') {
+        const body = await readJsonBody(req); conversation(body.room); approvals.answer(body.room, body.id, body.allow); return sendJson(res, 200, { ok: true });
+      }
       if (req.method === 'GET' && route === '/api/backend-login') {
         throw new Error('群聊复用 WorkBuddy 桌面现有登录，请在桌面应用中管理登录');
       }
@@ -508,7 +562,7 @@ function createApplication(options = {}) {
           modelLocked: Boolean(chosen), modelName: chosen ? [chosen.provider, chosen.name].filter(Boolean).join(' · ') : null,
           ...(chosen ? { effort: chosen.defaultEffort || null } : {}),
           persona: String(body.persona || '').trim().slice(0, 2000), aliases: [label], createdAt: new Date().toISOString() };
-        const direct = { id: 'chat-' + randomUUID(), kind: 'direct', title: label, agentIds: [agent.id], updatedAt: agent.createdAt, preview: '开始聊天吧' };
+        const direct = { id: 'chat-' + randomUUID(), kind: 'direct', title: label, agentIds: [agent.id], updatedAt: agent.createdAt, preview: '开始聊天吧', ...(defaultSessionConfig(agent.backend) ? { sessionConfig: defaultSessionConfig(agent.backend) } : {}) };
         save({ ...catalog, agents: [...catalog.agents, agent], conversations: [...catalog.conversations, direct] });
         changed();
         agent.desktopSync = await syncAgent(agent);
@@ -519,11 +573,11 @@ function createApplication(options = {}) {
         const body = await readJsonBody(req);
         if (configuring || closing) throw new Error('应用正在更新或退出');
         const agent = catalog.agents.find(a => a.id === body.agentId);
-        if (!agent || !['codex', 'dsh'].includes(agent.backend)) throw new Error('当前仅 Codex 和 DSH 支持多个单聊会话');
+        if (!agent || !['codex', 'dsh', 'qoder', 'zcode'].includes(agent.backend)) throw new Error('此后端暂不支持多个单聊会话');
         const title = String(body.title || '').trim();
         if (title.length > 60 || /[\r\n]/.test(title)) throw new Error('会话名称不能超过 60 个字符或包含换行');
         const row = { id: 'chat-' + randomUUID(), kind: 'direct', title: title || '新会话', titleSource: title ? 'custom' : 'automatic',
-          agentIds: [agent.id], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), preview: '开始新的对话' };
+          agentIds: [agent.id], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), preview: '开始新的对话', sessionConfig: defaultSessionConfig(agent.backend) };
         // A new index entry only. Native sessions are opened lazily on the first send.
         save({ ...catalog, conversations: [...catalog.conversations, row] });
         changed(); return sendJson(res, 201, { conversation: row });
@@ -531,7 +585,7 @@ function createApplication(options = {}) {
       if (req.method === 'POST' && route === '/api/conversation/title') {
         const body = await readJsonBody(req), row = conversation(body.id);
         const agent = catalog.agents.find(a => a.id === row.agentIds[0]);
-        if (row.kind !== 'direct' || !['codex', 'dsh'].includes(agent?.backend)) throw new Error('当前会话不支持单独命名');
+        if (row.kind !== 'direct' || !['codex', 'dsh', 'qoder', 'zcode'].includes(agent?.backend)) throw new Error('当前会话不支持单独命名');
         const title = String(body.title || '').trim();
         if (!title || title.length > 60 || /[\r\n]/.test(title)) throw new Error('请输入 1–60 个字符的会话名称，不能包含换行');
         if (configuring || closing) throw new Error('应用正在更新或退出');
@@ -732,6 +786,7 @@ function createApplication(options = {}) {
       if (req.method === 'POST' && route === '/api/stop') {
         const body = await readJsonBody(req);
         const state = await runtime(body.room);
+        approvals.cancel(body.room);
         polls.pauseRoom(body.room);
         for (const member of state.room.members) member.segments = [];
         await state.room.interruptAll();
@@ -756,6 +811,7 @@ function createApplication(options = {}) {
     for (const timer of registrationTimers.values()) clearTimeout(timer);
     registrationTimers.clear();
     closing = true;
+    approvals.cancel();
     clearInterval(pollTimer);
     await pollTickRunning;
     await pollBroker.close();

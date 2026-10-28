@@ -2,8 +2,17 @@
 
 ## 当前入口
 
+- 0.1.36 已实际更新本机安装并保留原有数据，最新交付与回滚位置见 HANDOFF.md 的“0.1.36 本机更新与 GitHub 源码交付”。后端能力与未验收边界见 docs/ZCODE_QODER_INTEGRATION.md。
+
+- 0.1.36 把 Qoder/ZCode 纳入 direct 多会话。Qoder 新会话使用原生 `default`，ZCode 使用原生 `build`，不得标为 OS 只读沙箱。`NativeModePool` 校验模式回显并保持固定模型；`yolo` 必须明确确认，旧会话不自动迁移。
+- ZCode 桌面桥接仅验证 Windows 3.16.3。`standalone/zcode-desktop-host.cjs` 在本应用拥有的无窗口 Electron 进程加载安装自带 Host，通过随机口令的 loopback 连接服务 `lib/zcode-pool.cjs`；`zcode-host-worker.cjs` 只为该子进程设置原安装资源根。未知版本拒绝。不要复制凭据、修改安装包或持久化权限批准；原生 Host 负责账号授权。关闭必须收尾 Host/Agent 子进程。
+- ZCode 混合房间的每个 session 绑定自身 Agent 工作区，不能强制等于 pool 启动目录。流式/终态同时核对 session、inputId 和 turnId，取消后的旧终态不能结束新一轮。模型请求已发出但状态未知时不自动重放。
+
 - 0.1.34 起项目/桌面显示名为 `agentschat`，package.productName 与 builder.productName 对齐。DSH 内部 npm 包名、客户端注册 ID、服务端导出名与 patch specifier 保持 `dsh-agent-room` 一致。为兼容既有升级，保留 appId `com.mocias.agentroom`、`Agent Room.exe`、`%APPDATA%/Agent Room`、环境变量/API/存储键及插件路由。不得因改名直接迁移用户目录。新安装包为 `agentschat-Setup-*`；增量更新新旧卸载程序时保持原注册的目标文件名。GitHub 仓库与发布 remote 均为 agentschat；本地源码目录沿用原名。
 - 独立 UI 的三栏布局位于 `standalone/public/chat-layout.css`，在原 app.css 后加载；所有颜色跟随主题变量。导航按钮必须有实际入口与可访问名称，保留 Codex/DSH 的会话与输入选项。
+- 0.1.35 的 `sessionConfig` 仅用于 Codex/DSH direct 会话，默认新会话只读，旧会话不自动迁移权限。通过 `/api/session-controls` 验证后端目录，预设只能在首条消息前更改；权限变更需空闲并释放旧运行态。不得把选择器做成只改文字、静默切换模型或自动批准工具。
+- `standalone/dsh-session-controls.cjs` 只在 Room 所属的 ACP 子进程复用已安装 DSH 预设配方、原生 agentPresets/permissionPresets；临时认证桥接位于数据目录 session-controls，不修改个人 DSH profile。禁用有 broken 诊断的预设，未知版本失败时报告不支持，不能伪造成功。打包必须实测从 ASAR 加载该桥接。
+- `lib/approval-requests.cjs` 将原生权限请求绑定当前房间和随机请求 ID；只能由用户一次性允许或拒绝，回复结束/取消/释放/超时拒绝未决请求。无效房间的停止请求不能取消其他房间的确认。ACP 显示原生工具标题/参数供用户审阅，不把显示标题当作自动授权依据。
 
 - 先读 `HANDOFF.md` 的最新版本节、`README.md` 和 `DESKTOP_VALIDATION.md`。版本以 `package.json` 为准，历史验收数字不能当成当前检查结果。
 - 主产品是 `desktop/main.cjs`、`standalone/` 与 `lib/room.cjs`；`lib/index.js` 和 `public/` 是旧 DSH 插件入口。投票目前接入独立应用，不能宣称旧插件也已支持。
@@ -35,7 +44,8 @@
 
 - 基础回归 `npm test`；按改动运行相关真实 UI 或后端检查。真实模型检查使用隔离数据，会消耗用户额度；不得把 fixture 测试当成真实回复验证。
 - 外观改动运行 `node scripts/check-ui-appearance.cjs`：使用本机 Chrome 与隔离 HTTP/SSE 服务，不调用模型或扫描安装；截图及报告写入 `output/playwright/appearance-*/`。同时保留现有输入栏、键盘和滚动回归。深浅色应跟随保存的背景色，新增颜色使用主题变量，不写死浅色控件。
-- 多会话验收 `node scripts/check-agent-sessions-ui.cjs`：隔离 HTTP/SSE、草稿附件切换、会话命名/置顶、模型推理界面、四种宽度和深浅主题。`UI_PACKAGED=1` 使用最终 EXE 并检查重启保留；打包模式不保存模拟推理选项，不启动真实后端。截图为隔离演示消息，不能冒充真实模型回复。
+- 多会话验收 `node scripts/check-agent-sessions-ui.cjs`：隔离 HTTP/SSE、草稿附件切换、会话命名/置顶、模型推理界面、四种宽度和深浅主题。`UI_PACKAGED=1` 使用最终 EXE 并检查重启保留；默认打包模式不保存模拟推理选项，不启动真实后端，只有下面的显式原生能力检查会启动后端读取配置。截图为隔离演示消息，不能冒充真实模型回复。
+- 原生配置：`node --test checks/session-controls.test.cjs`；`UI_PACKAGED=1 UI_NATIVE_CONTROLS=1` 的多会话脚本实际读目录并保存，仍不生成。`scripts/check-native-session-controls.cjs` 实测隔离空会话权限，`CONTROLS_ASAR` 指向最终 ASAR 时须用 Electron Node 模式运行。目录/配置实测不证明真实模型或工具执行；不要运行旧脚本中的生成测试代替它。
 - README 界面示例默认使用隔离演示数据，保留 harness 名称可见，并注明演示消息不是真实模型回复；用户明确指定上传的截图可按其要求使用，并据实更新图片说明。示例图片位于 `docs/images/`；未经用户授权不得上传真实聊天截图，不得把整个 `output/` 纳入提交。
 - 投票回归 `node --test checks/polls.test.cjs`；显式真实检查 `node scripts/check-live-polls.cjs codex,dsh`，其他可用组合见 DESKTOP_VALIDATION.md。
 - 记忆/目录回归 `node --test checks/agent-memory.test.cjs checks/workspaces.test.cjs`，使用临时数据和模拟 CLI，不消费真实模型额度。打包后运行 `node scripts/check-packaged-memory.cjs`，核对 ASAR、旧历史回填、重启去重与原文件校验；它不替换真实安装。

@@ -56,7 +56,7 @@ async function until(fn) {
   throw new Error('Timed out');
 }
 
-test('Codex and DSH workspace sessions preserve identity, histories and independent settings across restart', async t => {
+test('Codex, DSH, Qoder and ZCode workspace sessions preserve identity, histories and independent settings across restart', async t => {
   const turns = [], opened = [];
   const factory = settings => {
     const room = fakeFactory(turns)(settings);
@@ -73,7 +73,7 @@ test('Codex and DSH workspace sessions preserve identity, histories and independ
   const queryModels = async backend => ({ selected: backend + '-model', models: [{ id: backend + '-model', name: backend, efforts: ['low', 'high'], defaultEffort: 'low' }] });
   const env = await start(t, { roomFactory: factory, queryModels });
   const ids = [];
-  for (const backend of ['codex', 'dsh']) {
+  for (const backend of ['codex', 'dsh', 'qoder', 'zcode']) {
     const initial = (await env.call('/agents', { label: backend + ' 伙伴', backend, model: backend + '-model' })).data;
     const a = initial.agent;
     const created = await Promise.all([env.call('/conversations', { agentId: a.id }), env.call('/conversations', { agentId: a.id, title: '保留标题' })]);
@@ -120,19 +120,19 @@ test('Codex and DSH workspace sessions preserve identity, histories and independ
   const restart = await start(t, { dataDir: env.dataDir, roomFactory: factory, queryModels });
   assert.deepEqual((await restart.call('/ui-state')).data, navigation, 'navigation survives a new server port');
   const restored = (await restart.call('/catalog')).data;
-  assert.equal(restored.agents.length, 2); assert.equal(restored.conversations.length, 6);
+  assert.equal(restored.agents.length, 4); assert.equal(restored.conversations.length, 12);
   assert.ok(restored.agents.every(a => a.pinned));
   for (const [i, id] of ids.entries()) {
     const history = (await restart.call('/conversation?id=' + id)).data.snapshot.log;
     assert.ok(history.some(r => r.kind === 'user')); assert.equal(history.filter(r => r.kind === 'user').length, 1);
     assert.equal(fs.readFileSync(path.join(env.dataDir, 'rooms', id + '.log.jsonl'), 'utf8'), logs[i]);
   }
-  assert.equal(turns.length, 4);
+  assert.equal(turns.length, 8);
 });
 
 test('workspace session endpoints reject unsupported agents and invalid titles without changing the catalog', async t => {
   const env = await start(t, { roomFactory: fakeFactory([]) });
-  const qoder = (await env.call('/agents', { backend: 'qoder', label: 'Qoder' })).data;
+  const qoder = (await env.call('/agents', { backend: 'claude', label: 'Claude' })).data;
   const codex = (await env.call('/agents', { backend: 'codex', label: 'Codex' })).data;
   const before = fs.readFileSync(path.join(env.dataDir, 'catalog.json'), 'utf8');
   for (const agentId of ['missing', qoder.agent.id]) assert.equal((await env.call('/conversations', { agentId })).status, 400);

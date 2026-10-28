@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'SilentlyContinue'
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding
 $rows = [System.Collections.Generic.List[object]]::new()
-$product = 'codex|deepseek|\bdsh\b|qoder|workbuddy|claude'
+$product = 'codex|deepseek|\bdsh\b|qoder|workbuddy|claude|zcode'
 foreach ($key in @('HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*')) {
   Get-ItemProperty $key | Where-Object { $_.DisplayName -match $product } | ForEach-Object {
     $icon = [string]$_.DisplayIcon

@@ -14,6 +14,8 @@ const composerAdapters = {
 const permissionNames = { default: '逐次确认', acceptEdits: '自动批准编辑', auto: '原生安全判断', dontAsk: '拒绝未授权操作', yolo: '跳过权限确认', plan: '规划', build: '逐次确认', 'read-only': '只读', 'workspace-write': '工作区内修改', 'danger-full-access': '完整访问' };
 const presetNames = { native: '原生会话', standard: '标准模式', ptc: '程序化工具模式', minimal: '精简模式', cordis: 'Cordis 模式', default: '默认模式', plan: '规划模式' };
 const roomApprovals = new Map();
+const approvalVersions = new Map();
+const pendingVersions = new Map();
 function supportsSessions(agent) { return Boolean(composerAdapters[agent?.backend]); }
 function agentSessions(id) { return state.conversations.filter(c => c.kind === 'direct' && c.agentIds[0] === id).sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || b.updatedAt.localeCompare(a.updatedAt)); }
 function agentPinned(agent) { return agent.pinned ?? agentSessions(agent.id).some(c => c.pinned && !c.titleSource && c.title === agent.label); }
@@ -159,16 +161,34 @@ function attachmentsHtml(items, removable = false) {
 function renderAttachments() { $('#attachments').innerHTML = attachmentsHtml(state.uploads[state.current] || [], true); }
 const messageNodes = new Map();
 let renderedRoom = null;
-function renderMessages() {
+let visibleStart = 0;
+const historyPageSize = 120;
+const olderMessages = document.createElement('button');
+olderMessages.className = 'load-earlier';
+olderMessages.type = 'button';
+olderMessages.onclick = () => {
+  const panel = $('#messages'), top = panel.scrollTop, height = panel.scrollHeight;
+  visibleStart = Math.max(0, visibleStart - historyPageSize);
+  renderMessages(true);
+  panel.scrollTop = top + panel.scrollHeight - height;
+};
+function renderMessages(keepWindow = false) {
   const panel = $('#messages');
   const stick = panel.scrollHeight - panel.scrollTop - panel.clientHeight < 100;
   const log = state.snapshot?.log || [];
   $('#conversation-view').dataset.empty = String(!log.some(r => ['user', 'agent'].includes(r.kind)));
-  if (renderedRoom !== state.current) { panel.replaceChildren(); messageNodes.clear(); renderedRoom = state.current; }
+  if (renderedRoom !== state.current) { panel.replaceChildren(); messageNodes.clear(); renderedRoom = state.current; visibleStart = Math.max(0, log.length - historyPageSize); }
+  else if (stick && !keepWindow) visibleStart = Math.max(0, log.length - historyPageSize);
+  visibleStart = Math.min(visibleStart, Math.max(0, log.length - 1));
   panel.querySelector('.empty-chat')?.remove();
   const retained = new Set();
-  let previous = null;
-  for (const [index, record] of log.entries()) {
+  if (visibleStart) {
+    olderMessages.textContent = `查看更早的消息 · 还有 ${visibleStart} 条`;
+    if (panel.firstChild !== olderMessages) panel.prepend(olderMessages);
+  } else olderMessages.remove();
+  let previous = visibleStart ? olderMessages : null;
+  for (let index = visibleStart; index < log.length; index++) {
+    const record = log[index];
     const key = record.id || 'seq:' + (record.seq ?? index); retained.add(key);
     const html = messageHtml(record);
     let cached = messageNodes.get(key);
@@ -263,13 +283,15 @@ function updateActivity() {
   $('#send').disabled = !state.snapshot || state.pending.has(state.current) || state.loading > 0;
   $('#stop').hidden = !ids.size;
 }
+let conversationLoad = 0;
 async function openConversation(id) {
   const row = state.conversations.find(c => c.id === id); if (!row) return;
+  const generation = ++conversationLoad;
   hideMentions();
   closeComposerMenu();
   closeTools();
   if (state.current) state.drafts[state.current] = $('#draft').value;
-  state.current = id; state.snapshot = null; state.unread.delete(id);
+  state.current = id; state.snapshot = null; renderedRoom = null; state.unread.delete(id);
   localStorage.setItem('agent-room:selected', id);
   $('#welcome').hidden = true; $('#conversation-view').hidden = false;
   if (row.kind === 'direct' && supportsSessions(state.agents.find(a => a.id === row.agentIds[0]))) {
@@ -278,20 +300,24 @@ async function openConversation(id) {
   }
   renderConversationChrome();
   $('#draft').value = state.drafts[id] || '';
+  resizeDraft();
   $('#messages').innerHTML = '<div class="empty-chat">正在读取聊天记录…</div>';
   renderList(); renderAttachments(); updateActivity();
   renderApprovals();
   try {
-    await persistNavigation().catch(error => toast('界面状态未保存：' + error.message));
-    const result = await api('/conversation?id=' + encodeURIComponent(id));
-    if (state.current !== id) return;
-    state.snapshot = result.snapshot;
-    const approvals = await api('/approvals?room=' + encodeURIComponent(id));
-    if (state.current !== id) return;
-    roomApprovals.set(id, approvals.approvals); renderApprovals();
-    if (result.pending) state.pending.add(id); else state.pending.delete(id);
+    void persistNavigation().catch(error => toast('界面状态未保存：' + error.message));
+    const approvalVersion = approvalVersions.get(id), pendingVersion = pendingVersions.get(id);
+    void api('/approvals?room=' + encodeURIComponent(id)).then(approvals => {
+      if (generation !== conversationLoad || state.current !== id || approvalVersions.get(id) !== approvalVersion) return;
+      roomApprovals.set(id, approvals.approvals); renderApprovals();
+    }).catch(error => { if (generation === conversationLoad) toast(error.message); });
+    const result = await api('/conversation?preview=1&id=' + encodeURIComponent(id));
+    if (generation !== conversationLoad || state.current !== id) return;
+    // A newer SSE snapshot/approval can arrive while this request is in flight.
+    if (!state.snapshot) state.snapshot = result.snapshot;
+    if (pendingVersions.get(id) === pendingVersion) { if (result.pending) state.pending.add(id); else state.pending.delete(id); }
     renderMessages(); $('#messages').scrollTop = $('#messages').scrollHeight;
-  } catch (error) { if (state.current === id) $('#messages').textContent = error.message; toast(error.message); }
+  } catch (error) { if (generation === conversationLoad && state.current === id) { $('#messages').textContent = error.message; toast(error.message); } }
 }
 function showModal(title, content, submit, submitLabel = '确定') {
   $('#modal').classList.toggle('history-dialog', title === '聊天记录');
@@ -300,7 +326,7 @@ function showModal(title, content, submit, submitLabel = '确定') {
   onSubmit = submit; $('#modal').showModal();
 }
 function addAgent() {
-  showModal('添加 Agent', `<p class="hint">给你的 AI 伙伴取个名字。相同后端也可以添加多位伙伴。</p><label class="field">名称<input name="label" required maxlength="40" placeholder="例如：灵感搭子" autofocus></label><label class="field">后端<select name="backend">${state.harnesses.map(h => h.id).map((id) => { const found = state.harnesses.find((h) => h.id === id); return `<option value="${id}">${escapeHtml(found?.label || id)} · ${found?.found || found?.configured ? '已发现 / 已配置' : '未检测到'}</option>`; }).join('')}</select></label><p class="hint" id="backend-hint"></p><label class="field">固定模型<select name="model" required></select></label><p class="hint" id="model-hint"></p><button type="button" id="reload-models">重新读取模型</button><label class="field">工作区文件夹<input name="workspace" placeholder="留空自动创建：后端名称/Agent 名称"></label><p class="hint" id="workspace-hint"></p><button type="button" id="choose-workspace">选择文件夹…</button><label class="field">角色设定 <span class="hint">（可选）</span><textarea name="persona" maxlength="2000" placeholder="例如：你是一位擅长发散思考的设计伙伴。"></textarea></label>`, async (form) => {
+  showModal('添加 Agent', `<p class="hint">给你的 AI 伙伴取个名字。相同后端也可以添加多位伙伴。</p><label class="field">名称<input name="label" required maxlength="40" placeholder="例如：灵感搭子" autofocus></label><label class="field">后端<select name="backend">${state.harnesses.map(h => h.id).map((id) => { const found = state.harnesses.find((h) => h.id === id); return `<option value="${id}">${escapeHtml(found?.label || id)} · ${found?.found || found?.configured ? '已发现 / 已配置' : found?.status === 'pending' ? '等待检测' : '未检测到'}</option>`; }).join('')}</select></label><p class="hint" id="backend-hint"></p><label class="field">固定模型<select name="model" required></select></label><p class="hint" id="model-hint"></p><button type="button" id="reload-models">重新读取模型</button><label class="field">工作区文件夹<input name="workspace" placeholder="留空自动创建：后端名称/Agent 名称"></label><p class="hint" id="workspace-hint"></p><button type="button" id="choose-workspace">选择文件夹…</button><label class="field">角色设定 <span class="hint">（可选）</span><textarea name="persona" maxlength="2000" placeholder="例如：你是一位擅长发散思考的设计伙伴。"></textarea></label>`, async (form) => {
     const result = await api('/agents', Object.fromEntries(new FormData(form)));
     await refresh(); $('#modal').close(); await openConversation(result.conversation.id);
     if (result.agent.desktopSync?.status !== 'registered') toast(result.agent.desktopSync?.detail || '桌面同步待处理');
@@ -663,7 +689,7 @@ async function send() {
   if ((!text && !files.length) || $('#send').disabled) return;
   state.pending.add(id); updateActivity();
   // Clear immediately so an asynchronous failure can restore the draft safely.
-  hideMentions(); $('#draft').value = ''; state.drafts[id] = ''; state.uploads[id] = []; renderAttachments();
+  hideMentions(); $('#draft').value = ''; state.drafts[id] = ''; state.uploads[id] = []; renderAttachments(); resizeDraft();
   try { await api('/say', { room: id, text, attachments: files.map((f) => f.id) }); }
   catch (error) { state.pending.delete(id); restoreDraft(id, text, files); toast(error.message); }
   finally { updateActivity(); }
@@ -672,9 +698,9 @@ function restoreDraft(id, text, files) {
   const current = state.current === id ? $('#draft').value : state.drafts[id];
   state.drafts[id] = [text, current].filter(Boolean).join('\n');
   state.uploads[id] = [...files, ...(state.uploads[id] || [])];
-  if (state.current === id) { $('#draft').value = state.drafts[id]; renderAttachments(); }
+  if (state.current === id) { $('#draft').value = state.drafts[id]; renderAttachments(); resizeDraft(); }
 }
-async function refresh() { const data = await api('/catalog'); Object.assign(state, { agents: data.agents, conversations: data.conversations, harnesses: data.harnesses, canChooseWorkspace: data.canChooseWorkspace, workspaceRoot: data.workspaceRoot, discoveryChoice: data.discoveryChoice }); renderList(); renderConversationChrome(); if (data.discoveryChoice === null && !discoveryPromptShown) discoveryPrompt(); }
+async function refresh() { const data = await api('/catalog?fast=1'); Object.assign(state, { agents: data.agents, conversations: data.conversations, harnesses: data.harnesses, canChooseWorkspace: data.canChooseWorkspace, workspaceRoot: data.workspaceRoot, discoveryChoice: data.discoveryChoice }); renderList(); renderConversationChrome(); if (data.discoveryChoice === null && !discoveryPromptShown) discoveryPrompt(); }
 $('#add-agent').onclick = $('#welcome-add').onclick = addAgent;
 $('#new-group').onclick = createGroup; $('#settings').onclick = settings;
 $('#backends').onclick = () => { void backendSettings(); };
@@ -722,7 +748,12 @@ $('#file-input').onchange = (event) => { void uploadFiles([...event.target.files
 $('#attachments').onclick = (event) => { const button = event.target.closest('[data-remove-file]'); if (button) { state.uploads[state.current].splice(Number(button.dataset.removeFile), 1); renderAttachments(); } };
 $('#members').onclick = () => showMembers(); $('#mention').onclick = () => showMembers(true);
 $('#send').onclick = send;
-$('#draft').oninput = e => { state.drafts[state.current] = $('#draft').value; if (!e.isComposing) updateMentions(); };
+function resizeDraft() {
+  const draft = $('#draft'); if (!draft.clientWidth) return;
+  draft.style.height = '0px'; draft.style.height = Math.min(draft.scrollHeight, Math.max(72, innerHeight * .23)) + 'px';
+}
+window.addEventListener('resize', resizeDraft);
+$('#draft').oninput = e => { resizeDraft(); state.drafts[state.current] = $('#draft').value; if (!e.isComposing) updateMentions(); };
 $('#draft').onkeydown = (event) => {
   if (event.isComposing || event.keyCode === 229) return;
   if (mentionState) {
@@ -736,18 +767,26 @@ $('#chat').ondragover = (event) => { event.preventDefault(); $('#chat').classLis
 $('#chat').ondragleave = () => $('#chat').classList.remove('dragging');
 $('#chat').ondrop = (event) => { event.preventDefault(); $('#chat').classList.remove('dragging'); void uploadFiles([...event.dataTransfer.files]); };
 $('#stop').onclick = async () => { try { await api('/stop', { room: state.current }); } catch (error) { toast(error.message); } };
+async function refreshBackends() {
+  const data = await api('/backends'); state.harnesses = data.harnesses;
+}
+let bootstrapped = false, eventsConnected = false;
 const events = new EventSource('/api/events');
 events.onopen = async () => {
   $('#connection').className = 'online'; $('#connection').innerHTML = '<i></i>本地已连接';
-  try { await refresh(); if (state.current) { const id = state.current; const data = await api('/conversation?id=' + encodeURIComponent(id)); if (id === state.current) { state.snapshot = data.snapshot; if (data.pending) state.pending.add(id); else state.pending.delete(id); state.live.clear(); renderMessages(); } } } catch (error) { toast(error.message); }
+  if (!eventsConnected && !bootstrapped) { eventsConnected = true; return; }
+  eventsConnected = true;
+  try { await refresh(); if (state.current) { const id = state.current; const generation = conversationLoad; const data = await api('/conversation?preview=1&id=' + encodeURIComponent(id)); if (id === state.current && generation === conversationLoad) { state.snapshot = data.snapshot; if (data.pending) state.pending.add(id); else state.pending.delete(id); state.live.clear(); renderMessages(); } } } catch (error) { toast(error.message); }
 };
 events.onerror = () => { $('#connection').className = ''; $('#connection').innerHTML = '<i></i>连接中断，正在重连'; };
 events.onmessage = (message) => {
   const data = JSON.parse(message.data);
   if (data.type === 'approvals') {
+    approvalVersions.set(data.room, (approvalVersions.get(data.room) || 0) + 1);
     roomApprovals.set(data.room, data.approvals); if (data.room === state.current) renderApprovals();
     else if (data.approvals.length) { state.unread.add(data.room); renderList(); toast('另一会话有操作等待你确认'); }
   }
+  if (data.type === 'backends') void refreshBackends().catch(error => toast(error.message));
   if (data.type === 'poll-error') toast(data.message);
   if (data.type === 'polls' && data.room === state.current && state.snapshot) {
     state.snapshot.polls = data.polls; scheduleMessages(true);
@@ -756,7 +795,7 @@ events.onmessage = (message) => {
   if (data.type === 'catalog') { state.agents = data.catalog.agents; state.conversations = data.catalog.conversations; clearMissingConversation(); renderList(); renderConversationChrome(); }
   if (data.type === 'snapshot' && data.room === state.current) { state.snapshot = data.snapshot; scheduleMessages(true); }
   if (data.type === 'message' && data.room !== state.current) { state.unread.add(data.room); renderList(); }
-  if (data.type === 'pending') { if (data.pending) state.pending.add(data.room); else state.pending.delete(data.room); updateActivity(); }
+  if (data.type === 'pending') { pendingVersions.set(data.room, (pendingVersions.get(data.room) || 0) + 1); if (data.pending) state.pending.add(data.room); else state.pending.delete(data.room); updateActivity(); }
   if (data.type === 'failure') { restoreDraft(data.room, data.text, data.attachments); toast('发送失败，内容已恢复到草稿：' + data.error); }
   if (data.type === 'stream') {
     const event = data.event;
@@ -768,14 +807,18 @@ events.onmessage = (message) => {
   }
 };
 (async () => { try {
-  const location = await api('/data-location'); if (location.warning) toast(location.warning);
-  const navigation = await api('/ui-state');
+  const [navigation] = await Promise.all([api('/ui-state'), refresh(),
+    api('/theme').then(data => applyTheme(data.theme)).catch(error => toast(error.message)),
+    api('/data-location').then(location => { if (location.warning) toast(location.warning); }).catch(error => toast(error.message)),
+  ]);
   for (const key of Object.keys(expandedAgents)) delete expandedAgents[key];
   for (const key of Object.keys(lastAgentSessions)) delete lastAgentSessions[key];
   Object.assign(expandedAgents, navigation.expanded); Object.assign(lastAgentSessions, navigation.lastSessions);
-  await refresh(); applyTheme((await api('/theme')).theme);
+  renderList();
   const id = navigation.selected || localStorage.getItem('agent-room:selected');
   if (state.conversations.some(row => row.id === id)) await openConversation(id);
+  bootstrapped = true;
+  void refreshBackends().catch(error => toast('后端检测：' + error.message));
 } catch (error) { toast(error.message); } })();
 
 

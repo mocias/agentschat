@@ -1,6 +1,6 @@
 # agentschat — Handoff
 
-交接更新：2026-10-28。当前源码和本机安装均为 0.1.36；最新 ZCode/Qoder 接入见文末及 docs/ZCODE_QODER_INTEGRATION.md。GitHub 仓库已改名 agentschat，界面采用微信风格三栏布局，验收和产物见文末最新节。0.1.33 的 Codex / DSH 多会话和独立输入布局继续保留。0.1.32 的 Agent 共享记忆和工作区隔离继续保留。本机已从 0.1.34 更新至 0.1.35，实际启动检查通过，原聊天和现存工作区保留；升级前已有一个 DSH 工作区缺失，未自动重建。发布目标为 `agentschat/main`（https://github.com/mocias/agentschat），不是 `origin/master`。优先阅读文末最新节及 AGENTS.md；前文各版本是历史记录，不能作为当前状态。产品显示名改为 agentschat；保留内部 npm 包名 dsh-agent-room、原 MIT LICENSE、旧安装/数据标识和插件入口兼容。本文区分已实现、已验证和未完成事项。
+交接更新：2026-10-29。当前源码和本机安装均为 0.1.37；界面与加载优化见文末及 docs/UI_LOADING_0_1_37.md。最新 ZCode/Qoder 接入见文末及 docs/ZCODE_QODER_INTEGRATION.md。GitHub 仓库已改名 agentschat，界面采用微信风格三栏布局，验收和产物见文末最新节。0.1.33 的 Codex / DSH 多会话和独立输入布局继续保留。0.1.32 的 Agent 共享记忆和工作区隔离继续保留。本机已从 0.1.34 更新至 0.1.35，实际启动检查通过，原聊天和现存工作区保留；升级前已有一个 DSH 工作区缺失，未自动重建。发布目标为 `agentschat/main`（https://github.com/mocias/agentschat），不是 `origin/master`。优先阅读文末最新节及 AGENTS.md；前文各版本是历史记录，不能作为当前状态。产品显示名改为 agentschat；保留内部 npm 包名 dsh-agent-room、原 MIT LICENSE、旧安装/数据标识和插件入口兼容。本文区分已实现、已验证和未完成事项。
 
 0.1.8 更新：默认工作区改为桌面安装目录/agents/backend/Agent名称；浏览器默认源码根/agents，支持 AGENT_ROOM_WORKSPACE_ROOT；旧路径不迁移。添加删除操作，默认保留文件，删除文件需完整路径确认，禁止共用/嵌套工作区、磁盘根、应用数据祖先、符号链接/联接。删除联系人移除单聊入口与群成员，保留群聊记录、底层日志和原后端记录。安装包构建不等于用户已安装版本更新。
 
@@ -657,3 +657,18 @@ Qoder/ZCode 纳入多会话与输入区：新建、命名、置顶、草稿/附�
 源码交付目标为 agentschat/main。提交包含此前本地 0.1.35 原生会话配置及 0.1.36 Qoder/ZCode 接入、测试、隔离演示图和文档；不包含用户数据、备份、测试输出、安装包、凭据或第三方运行时。140 项回归、最终包源码一致性、原生目录、真实混合群及增量检查沿用前一节对应证据；本次没有修改运行代码。完整 NSIS 安装/卸载未重跑，不创建 GitHub Release。前文“本机仍为 0.1.35 / 尚未推送”保留为实现阶段记录，当前安装和交付事实以本节与远端 main 为准。
 
 本次证据：output/local-update-0.1.36-ck3NXZ/prepare.json、installed-update.json、installed-startup.json、dynamic-receipt.json、reopened.json。
+
+
+## 0.1.37 界面、加载与本机交付（2026-10-29）
+
+紧凑居中输入卡片、自动高度、侧栏/消息样式统一。首屏并行加载、后台发现、只读历史预览、120 条历史渐进显示及回填批量落盘已实现；详见 `docs/UI_LOADING_0_1_37.md`。143/143 回归通过，基准与 UI/EXE 证据见该文。
+
+本机 `D:\Agent Room\Agent Room.exe` 已从 0.1.36 更新到 0.1.37，原数据目录 `D:\agent room data`、4 Agents、6 conversations、原有固定模型/权限/记录/现存工作区保持。原本缺失的 DSH 工作区没有重建。备份 41 个文件；40 个字节不变，`desktop-sync/dsh.json` 仅正常后台 `checkedAt` 更新。实际启动 0 次聊天、0 次模型目录请求，浏览器无错误。
+
+- 本机备份及安装验收：`output/local-update-0.1.37-bkWHJt/`。
+- 程序回滚备份：`D:\Agent Room\.update-backup-0.1.36-a6d9b801a7a74b5689908e862140bb70`。
+- 最终 EXE 会话/重启：`output/playwright/agent-sessions-tDSi4G/report.json`；ASAR 59 源码一致：`output/local-update-0.1.37-bkWHJt/package-audit.json`。
+- 完整包 `dist/agentschat-Setup-0.1.37-x64.exe`（102772310 bytes）；0.1.36 精确基线增量 `dist/agentschat-Update-0.1.36-to-0.1.37.zip`（377948 bytes）；校验 `dist/SHA256SUMS-0.1.37.txt`。
+- 当前账号限制：ZCode 目录报 -32000 无可用模型，旧 0.1.36 同样复现（`output/native-catalog-compare-9SAMPi/result.json`）；不将 UI/安装成功等同于原生云模型可用。
+
+沿用用户已授权的覆盖更新与 GitHub 推送，源码目标 `agentschat/main`；不上传 dist、output、工作区、账号或聊天数据，不创建 GitHub Release。

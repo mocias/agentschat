@@ -173,10 +173,10 @@ function createApplication(options = {}) {
     if (!found || deletingRooms.has(id)) throw Object.assign(new Error('会话不存在或正在删除'), { status: 404 });
     return found;
   }
-  async function runtime(id, allowUnavailable = false) {
+  async function runtime(id, allowUnavailable = false, preview = false) {
     const row = conversation(id);
     if (runtimes.has(id)) return runtimes.get(id);
-    const detected = await discovery.scan();
+    const detected = preview ? discovery.snapshot() : await discovery.scan();
     conversation(id); // Do not resurrect a room removed while discovery was pending.
     if (!allowUnavailable && !options.roomFactory && !discovery.allowAuto && row.agentIds.some(key => !detected.find(b => b.id === catalog.agents.find(a => a.id === key)?.backend)?.found)) throw new Error('请先在后端管理中允许扫描或手动配置程序路径');
     if (runtimes.has(id)) return runtimes.get(id);
@@ -211,6 +211,12 @@ function createApplication(options = {}) {
       }),
       segmentMs: 1200, maxRelayHops: 2 });
     for (const record of room.log) api.attachments.rehydrate(record);
+    if (preview) {
+      // A saved-history view uses the engine's usual privacy/attachment rules,
+      // but neither keeps an unconfigured runtime nor waits for program discovery.
+      try { return { preview: api._publicSnapshot(room.snapshot()), pending: false }; }
+      finally { await room.dispose(); }
+    }
     const state = { room, connecting: null, pending: false, lastUsed: Date.now() };
     runtimes.set(id, state);
     room.on('session', event => {
@@ -372,7 +378,8 @@ function createApplication(options = {}) {
       }
       if (req.method === 'GET' && route === '/api/catalog') {
         const agents = catalog.agents.map(agent => ({ ...agent, memory: memory.stats(agent.id), workspaceIssue: workspaceIssue(agent), desktopSync: (options.inspectDesktop || inspectDesktop)(agent, { dataDir, conversations: catalog.conversations }) || agent.desktopSync }));
-        return sendJson(res, 200, { ...catalog, agents, discoveryChoice, canChooseWorkspace: Boolean(options.chooseWorkspaceDirectory), workspaceRoot, harnesses: discovery.publicRows(await discovery.scan()) });
+        const fast = url.searchParams.get('fast') === '1';
+        return sendJson(res, 200, { ...catalog, agents, discoveryChoice, canChooseWorkspace: Boolean(options.chooseWorkspaceDirectory), workspaceRoot, harnesses: discovery.publicRows(fast ? discovery.snapshot() : await discovery.scan()) });
       }
       if (route === '/api/ui-state' && ['GET', 'POST'].includes(req.method)) {
         let input = {};
@@ -537,7 +544,8 @@ function createApplication(options = {}) {
         return;
       }
       if (req.method === 'GET' && route === '/api/conversation') {
-        const state = await runtime(url.searchParams.get('id'), true);
+        const state = await runtime(url.searchParams.get('id'), true, url.searchParams.get('preview') === '1');
+        if (state.preview) return sendJson(res, 200, { snapshot: state.preview, pending: false });
         state.lastUsed = Date.now();
         return sendJson(res, 200, { snapshot: api._publicSnapshot(state.room.snapshot()), pending: state.pending });
       }

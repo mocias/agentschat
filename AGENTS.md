@@ -2,7 +2,8 @@
 
 ## 当前入口
 
-- 0.1.36 已实际更新本机安装并保留原有数据，最新交付与回滚位置见 HANDOFF.md 的“0.1.36 本机更新与 GitHub 源码交付”。后端能力与未验收边界见 docs/ZCODE_QODER_INTEGRATION.md。
+- 0.1.37 已实际更新本机安装并保留原有数据；界面/加载实现、可复现基准及当前 ZCode 账号限制见 docs/UI_LOADING_0_1_37.md，最新交付与回滚位置见 HANDOFF.md 文末。后端接入设计见 docs/ZCODE_QODER_INTEGRATION.md。
+- 首屏使用 fast catalog 和 preview history；历史预览不可保留未配置的运行态或启动模型。长历史按 120 条展开，完整日志不裁剪；回填批处理不能弱化实时消息落盘和私聊边界。加载改动需运行 `BENCH_VERIFY=1 node scripts/benchmark-loading.cjs`（PowerShell 通过 `$env:BENCH_VERIFY='1'` 设置）。
 
 - 0.1.36 把 Qoder/ZCode 纳入 direct 多会话。Qoder 新会话使用原生 `default`，ZCode 使用原生 `build`，不得标为 OS 只读沙箱。`NativeModePool` 校验模式回显并保持固定模型；`yolo` 必须明确确认，旧会话不自动迁移。
 - ZCode 桌面桥接仅验证 Windows 3.16.3。`standalone/zcode-desktop-host.cjs` 在本应用拥有的无窗口 Electron 进程加载安装自带 Host，通过随机口令的 loopback 连接服务 `lib/zcode-pool.cjs`；`zcode-host-worker.cjs` 只为该子进程设置原安装资源根。未知版本拒绝。不要复制凭据、修改安装包或持久化权限批准；原生 Host 负责账号授权。关闭必须收尾 Host/Agent 子进程。

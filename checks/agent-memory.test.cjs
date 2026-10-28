@@ -14,6 +14,39 @@ const row = (id, agentIds, kind = 'group') => ({ id, title: id, kind, agentIds }
 const message = (id, text, extra = {}) => ({ id, text, authorId: 'user', authorLabel: '用户', kind: 'user',
   ts: new Date().toISOString(), visibility: 'public', recipientIds: [], ...extra });
 
+test('history replay batches durable writes and retains privacy, deduplication and live durability', t => {
+  const dir = root(), rooms = path.join(dir, 'rooms'); fs.mkdirSync(rooms);
+  const room = row('batch', ['a', 'b']);
+  const catalog = { agents: [{ id: 'a' }, { id: 'b' }], conversations: [room] };
+  const entries = Array.from({ length: 600 }, (_, i) => message('m' + i, 'PUBLIC_' + i));
+  entries.push(entries[0], message('private', 'ONLY_A', { visibility: 'private', recipientIds: ['a'] }), message('stream', 'PARTIAL', { partial: true }));
+  fs.writeFileSync(path.join(rooms, 'batch.log.jsonl'), entries.map(JSON.stringify).join('\n') + '\n{torn');
+  const sync = fs.fsyncSync, writes = t.mock.method(fs, 'fsyncSync', (...args) => sync(...args));
+  let store = new AgentMemoryStore(path.join(dir, 'memory')); store.importHistory(catalog, rooms);
+  assert.equal(store.stats('a').count, 601); assert.equal(store.stats('b').count, 600);
+  assert.ok(writes.mock.callCount() <= 6);
+  assert.doesNotMatch(store.context('b', { query: 'ONLY_A' }), /ONLY_A/);
+  const before = writes.mock.callCount();
+  store = new AgentMemoryStore(path.join(dir, 'memory')); store.importHistory(catalog, rooms);
+  assert.equal(writes.mock.callCount(), before);
+  store.capture(row('live', ['a']), message('live', 'LIVE_DURABLE'));
+  assert.equal(writes.mock.callCount(), before + 1);
+  assert.equal(new AgentMemoryStore(path.join(dir, 'memory')).stats('a').count, 602);
+});
+
+test('failed history flush is replayable and does not publish unsynced entries', t => {
+  const dir = root(), rooms = path.join(dir, 'rooms'); fs.mkdirSync(rooms);
+  const catalog = { agents: [{ id: 'a' }], conversations: [row('replay', ['a'])] };
+  fs.writeFileSync(path.join(rooms, 'replay.log.jsonl'), JSON.stringify(message('one', 'RECOVERABLE')) + '\n');
+  const store = new AgentMemoryStore(path.join(dir, 'memory'));
+  const sync = t.mock.method(fs, 'fsyncSync', () => { throw new Error('fixture sync failure'); });
+  assert.throws(() => store.importHistory(catalog, rooms), /fixture sync failure/);
+  assert.equal(store.stats('a').count, 0);
+  sync.mock.restore(); store.importHistory(catalog, rooms);
+  assert.equal(store.stats('a').count, 1);
+  assert.equal(new AgentMemoryStore(path.join(dir, 'memory')).stats('a').count, 1);
+});
+
 test('memory belongs to an Agent across direct/group rooms, never to the harness', () => {
   const dir = root(), store = new AgentMemoryStore(dir);
   store.capture(row('direct-a', ['a'], 'direct'), message('m1', '项目暗号 AURORA_7281'));

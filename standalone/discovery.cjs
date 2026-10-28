@@ -152,6 +152,13 @@ class BackendDiscovery {
     this.inflight = this.discover().then((rows) => { this.cached = { at: Date.now(), rows }; return rows; }).finally(() => { this.inflight = null; });
     return this.inflight;
   }
+  snapshot() {
+    return this.cached?.rows || harnessIds().map(id => ({ id,
+      label: id === 'claude' ? 'Claude Code' : isWorkbuddy(id) ? editions[id].label : ({ codex: 'Codex', dsh: 'DSH', qoder: 'Qoder', zcode: 'ZCode' })[id],
+      found: false, configured: Boolean(this.preferences[id]?.path), status: 'pending',
+      detail: '尚未完成后端检测', selected: null, candidates: [],
+    }));
+  }
   async discover() {
     const inventory = this.allowAuto ? await this.inventory() : { rows: [], warning: '' };
     const rows = [];

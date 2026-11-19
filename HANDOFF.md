@@ -672,3 +672,7 @@ Qoder/ZCode 纳入多会话与输入区：新建、命名、置顶、草稿/附�
 - 当前账号限制：ZCode 目录报 -32000 无可用模型，旧 0.1.36 同样复现（`output/native-catalog-compare-9SAMPi/result.json`）；不将 UI/安装成功等同于原生云模型可用。
 
 沿用用户已授权的覆盖更新与 GitHub 推送，源码目标 `agentschat/main`；不上传 dist、output、工作区、账号或聊天数据，不创建 GitHub Release。
+
+## 2026-11-19 全新克隆的开发环境修复
+
+补齐锁文件中的 peer 依赖及其传递依赖。跨盘启动测试自行创建 `output/`。Windows 上用 Node.js 24 在全新克隆中验证了 `npm ci` 和 `npm test`，结果和日志见 [DESKTOP_VALIDATION.md](DESKTOP_VALIDATION.md)。

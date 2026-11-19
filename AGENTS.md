@@ -44,6 +44,7 @@
 ## 验证与交付
 
 - 基础回归 `npm test`；按改动运行相关真实 UI 或后端检查。真实模型检查使用隔离数据，会消耗用户额度；不得把 fixture 测试当成真实回复验证。
+- 修改依赖锁文件或测试初始化代码后，在全新检出目录用 Node.js 24 依次运行 `npm ci` 和 `npm test`，确认测试启动时无需预建 `output/`。
 - 外观改动运行 `node scripts/check-ui-appearance.cjs`：使用本机 Chrome 与隔离 HTTP/SSE 服务，不调用模型或扫描安装；截图及报告写入 `output/playwright/appearance-*/`。同时保留现有输入栏、键盘和滚动回归。深浅色应跟随保存的背景色，新增颜色使用主题变量，不写死浅色控件。
 - 多会话验收 `node scripts/check-agent-sessions-ui.cjs`：隔离 HTTP/SSE、草稿附件切换、会话命名/置顶、模型推理界面、四种宽度和深浅主题。`UI_PACKAGED=1` 使用最终 EXE 并检查重启保留；默认打包模式不保存模拟推理选项，不启动真实后端，只有下面的显式原生能力检查会启动后端读取配置。截图为隔离演示消息，不能冒充真实模型回复。
 - 原生配置：`node --test checks/session-controls.test.cjs`；`UI_PACKAGED=1 UI_NATIVE_CONTROLS=1` 的多会话脚本实际读目录并保存，仍不生成。`scripts/check-native-session-controls.cjs` 实测隔离空会话权限，`CONTROLS_ASAR` 指向最终 ASAR 时须用 Electron Node 模式运行。目录/配置实测不证明真实模型或工具执行；不要运行旧脚本中的生成测试代替它。

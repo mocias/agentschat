@@ -7,9 +7,12 @@ const { AgentRoom } = require('../lib/room.cjs');
 
 // Launch an actual process: on this Windows host node.exe is on C:, while the
 // fixture, app data and member workspaces are on D:. No model/network is used.
+const outputDir = path.resolve(__dirname, '..', 'output');
+fs.mkdirSync(outputDir, { recursive: true });
+
 for (const backend of ['codex', 'dsh']) {
   test(backend + ' starts with a fresh data directory and keeps the member workspace across drives', async t => {
-    const root = fs.mkdtempSync(path.resolve('output/launch-workspace-'));
+    const root = fs.mkdtempSync(path.join(outputDir, 'launch-workspace-'));
     const workspace = path.join(root, 'member workspace'); fs.mkdirSync(workspace);
     const cli = path.join(root, 'fixture.cjs');
     fs.writeFileSync(cli, `const readline=require('node:readline');

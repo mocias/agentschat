@@ -1,5 +1,9 @@
 # Windows 桌面版验收 · 2026-10-16
 
+## 全新克隆的开发环境 · 2026-11-19
+
+在 D 盘的新克隆中应用补丁后，使用 C 盘的 Node.js 24.22.3 LTS 和 npm 11.19.1 直接执行 `npm ci` 和 `npm test`，两条命令均返回 0。测试启动前没有 `output/`。两项跨盘启动检查通过，总计 142 项通过、0 项失败、1 项因 Electron 可执行文件尚未下载而跳过。日志位于 `output/agentroom-fresh-1795068454221/`。
+
 ## WorkBuddy refusal 复查 · 2026-10-20
 
 - 同一 WorkBuddy AI 安装、`deepseek-v4.1-flash`，单运行时/单会话/单 prompt 成功返回 `WORKBUDDY_LOCAL_OK`：`output/workbuddy-diagnosis-ji48xn/report.json`。
